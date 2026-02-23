@@ -1,0 +1,63 @@
+get_trips:
+  name: Get Trips
+  description: Récupère les trips d'un tracker GeoRide
+  fields:
+    tracker_id:
+      name: Tracker ID
+      description: ID du tracker GeoRide
+      required: true
+      example: "2289417"
+      selector:
+        text:
+    from_date:
+      name: Date de début
+      description: Date de début
+      required: false
+      selector:
+        datetime:
+    to_date:
+      name: Date de fin
+      description: Date de fin
+      required: false
+      selector:
+        datetime:
+        
+set_odometer:
+  name: Ajuster le kilométrage
+  description: Définir le kilométrage réel de la moto (à faire une seule fois)
+  fields:
+    entity_id:
+      name: Capteur
+      description: Le capteur odometer à ajuster
+      required: true
+      example: "sensor.tmax_530_odometer"
+      selector:
+        entity:
+          domain: sensor
+          integration: georide_trips
+    value:
+      name: Kilométrage actuel
+      description: Le kilométrage actuel affiché sur le compteur de votre moto
+      required: true
+      example: 15234.5
+      selector:
+        number:
+          min: 0
+          max: 500000
+          step: 0.1
+          unit_of_measurement: "km"
+          mode: box
+
+reset_odometer:
+  name: Réinitialiser le kilométrage
+  description: Remettre le kilométrage sur la valeur du tracker uniquement
+  fields:
+    entity_id:
+      name: Capteur
+      description: Le capteur odometer à réinitialiser
+      required: true
+      example: "sensor.tmax_530_odometer"
+      selector:
+        entity:
+          domain: sensor
+          integration: georide_trips

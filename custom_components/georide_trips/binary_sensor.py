@@ -1,0 +1,257 @@
+"""GeoRide Trips binary_sensor entities.
+
+Entités créées par tracker :
+
+── Alimentées par Socket.IO (temps réel) ─────────────────────────
+  - moving   : True si la moto est en mouvement
+  - stolen   : True si l'alarme vol est active
+  - crashed  : True si une chute est détectée
+
+── Alimentées par GeoRideTrackerStatusCoordinator (polling 5 min) ──
+  - online   : True si le tracker est en ligne (status == "online")
+  - locked   : True si le tracker est verrouillé (isLocked)
+"""
+
+import logging
+
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+
+SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
+    {
+        "key": "moving",
+        "name": "En mouvement",
+        "device_class": BinarySensorDeviceClass.MOTION,
+        "icon_on": "mdi:motorbike",
+        "icon_off": "mdi:motorbike-off",
+        "socket_events": ["position", "device"],
+        "payload_key": "moving",
+    },
+    {
+        "key": "stolen",
+        "name": "Alarme vol",
+        "device_class": BinarySensorDeviceClass.TAMPER,
+        "icon_on": "mdi:shield-alert",
+        "icon_off": "mdi:shield-check",
+        "socket_events": ["device"],
+        "payload_key": "stolen",
+    },
+    {
+        "key": "crashed",
+        "name": "Chute détectée",
+        "device_class": BinarySensorDeviceClass.PROBLEM,
+        "icon_on": "mdi:alert-circle",
+        "icon_off": "mdi:check-circle",
+        "socket_events": ["device"],
+        "payload_key": "crashed",
+    },
+]
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Créer les binary_sensors pour chaque tracker."""
+    data = hass.data[DOMAIN][entry.entry_id]
+    trackers = data["trackers"]
+    socket_manager = data.get("socket_manager")
+    tracker_status_coordinators = data["tracker_status_coordinators"]
+
+    entities = []
+    for tracker in trackers:
+        tracker_id = str(tracker.get("trackerId"))
+        status_coordinator = tracker_status_coordinators[tracker_id]
+
+        # Sensors Socket.IO
+        for desc in SOCKET_BINARY_SENSOR_DESCRIPTIONS:
+            entities.append(
+                GeoRideBinarySensor(entry, tracker, desc, socket_manager)
+            )
+
+        # Sensors polling (status coordinator)
+        entities.append(GeoRideOnlineBinarySensor(status_coordinator, entry, tracker))
+        entities.append(GeoRideLockedBinarySensor(status_coordinator, entry, tracker))
+
+    async_add_entities(entities)
+    _LOGGER.info(
+        "Added %d binary_sensor entities for %d trackers",
+        len(entities),
+        len(trackers),
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# BINARY SENSORS SOCKET.IO
+# ════════════════════════════════════════════════════════════════════════════
+
+class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
+    """Binary sensor GeoRide alimenté par Socket.IO."""
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        tracker: dict,
+        desc: dict,
+        socket_manager,
+    ) -> None:
+        self._entry = entry
+        self._tracker = tracker
+        self._desc = desc
+        self._socket_manager = socket_manager
+
+        self._tracker_id = str(tracker.get("trackerId"))
+        self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+
+        self._attr_unique_id = f"{self._tracker_id}_{desc['key']}"
+        self._attr_name = f"{self._tracker_name} {desc['name']}"
+        self._attr_device_class = desc["device_class"]
+        self._attr_is_on = False
+
+        self._unregister_callbacks: list = []
+
+    @property
+    def icon(self) -> str:
+        return self._desc["icon_on"] if self._attr_is_on else self._desc["icon_off"]
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._tracker_id)},
+            name=f"{self._tracker_name} Trips",
+            manufacturer="GeoRide",
+            model=self._tracker.get("model", "GeoRide Tracker"),
+            sw_version=str(self._tracker.get("softwareVersion", "")),
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restaurer l'état et s'abonner aux events Socket.IO."""
+        await super().async_added_to_hass()
+
+        if (last_state := await self.async_get_last_state()) is not None:
+            if last_state.state not in (None, "unknown", "unavailable"):
+                self._attr_is_on = last_state.state == "on"
+
+        if self._socket_manager:
+            for event_name in self._desc["socket_events"]:
+                unregister = self._socket_manager.register_callback(
+                    self._tracker_id,
+                    event_name,
+                    self._handle_socket_event,
+                )
+                self._unregister_callbacks.append(unregister)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Se désenregistrer des callbacks Socket.IO."""
+        for unregister in self._unregister_callbacks:
+            unregister()
+        self._unregister_callbacks.clear()
+
+    async def _handle_socket_event(self, data: dict) -> None:
+        """Traiter un événement Socket.IO et mettre à jour l'état."""
+        payload_key = self._desc["payload_key"]
+        if payload_key not in data:
+            return
+        new_state = bool(data[payload_key])
+        if new_state != self._attr_is_on:
+            self._attr_is_on = new_state
+            self.async_write_ha_state()
+            _LOGGER.debug(
+                "%s → %s (from Socket.IO event)",
+                self._attr_name,
+                "ON" if new_state else "OFF",
+            )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# BINARY SENSORS POLLING (GeoRideTrackerStatusCoordinator)
+# ════════════════════════════════════════════════════════════════════════════
+
+class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor : tracker en ligne (status == 'online'), mis à jour toutes les 5 min."""
+
+    def __init__(self, coordinator, entry: ConfigEntry, tracker: dict) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._tracker = tracker
+        self._tracker_id = str(tracker.get("trackerId"))
+        self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+
+        self._attr_unique_id = f"{self._tracker_id}_online"
+        self._attr_name = f"{self._tracker_name} En ligne"
+        self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._tracker_id)},
+            name=f"{self._tracker_name} Trips",
+            manufacturer="GeoRide",
+            model=self._tracker.get("model", "GeoRide Tracker"),
+            sw_version=str(self._tracker.get("softwareVersion", "")),
+        )
+
+    @property
+    def is_on(self) -> bool:
+        data = self.coordinator.data
+        if not data:
+            return False
+        return data.get("status") == "online"
+
+    @property
+    def icon(self) -> str:
+        return "mdi:signal" if self.is_on else "mdi:signal-off"
+
+
+class GeoRideLockedBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor : tracker verrouillé (isLocked), mis à jour toutes les 5 min."""
+
+    def __init__(self, coordinator, entry: ConfigEntry, tracker: dict) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._tracker = tracker
+        self._tracker_id = str(tracker.get("trackerId"))
+        self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+
+        self._attr_unique_id = f"{self._tracker_id}_locked"
+        self._attr_name = f"{self._tracker_name} Verrouillé"
+        self._attr_device_class = BinarySensorDeviceClass.LOCK
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._tracker_id)},
+            name=f"{self._tracker_name} Trips",
+            manufacturer="GeoRide",
+            model=self._tracker.get("model", "GeoRide Tracker"),
+            sw_version=str(self._tracker.get("softwareVersion", "")),
+        )
+
+    @property
+    def is_on(self) -> bool:
+        # BinarySensorDeviceClass.LOCK : is_on=True = déverrouillé, is_on=False = verrouillé
+        data = self.coordinator.data
+        if not data:
+            return False
+        return not bool(data.get("isLocked", False))
+
+    @property
+    def icon(self) -> str:
+        return "mdi:lock-open" if self.is_on else "mdi:lock"

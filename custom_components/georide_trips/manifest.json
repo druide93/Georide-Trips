@@ -1,0 +1,12 @@
+{
+  "domain": "georide_trips",
+  "name": "GeoRide Trips",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/druide93/Georide-Trips",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/druide93/Georide-Trips",
+  "requirements": ["aiohttp>=3.8.0", "python-socketio[asyncio_client]>=5.0"],
+  "version": "2.0.0"
+}
