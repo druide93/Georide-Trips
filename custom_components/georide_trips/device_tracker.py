@@ -29,12 +29,11 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     trackers = data["trackers"]
     api: GeoRideTripsAPI = data["api"]
-    socket_manager = data.get("socket_manager")
 
     entities = []
     for tracker in trackers:
         entities.append(
-            GeoRidePositionTracker(hass, entry, tracker, api, socket_manager)
+            GeoRidePositionTracker(hass, entry, tracker, api)
         )
 
     async_add_entities(entities)
@@ -54,13 +53,12 @@ class GeoRidePositionTracker(TrackerEntity):
         entry: ConfigEntry,
         tracker: dict,
         api: GeoRideTripsAPI,
-        socket_manager,
     ) -> None:
         self._hass = hass
         self._entry = entry
         self._tracker = tracker
         self._api = api
-        self._socket_manager = socket_manager
+        self._socket_manager = None
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
@@ -120,7 +118,7 @@ class GeoRidePositionTracker(TrackerEntity):
         if self._fix_time:
             attrs["fix_time"] = self._fix_time
         if self._speed is not None:
-            attrs["speed_kmh"] = round(self._speed * 1.852, 1)  # knots → km/h
+            attrs["speed_kmh"] = round(self._speed, 1)  # déjà en km/h
         if self._heading is not None:
             attrs["heading"] = self._heading
         if self._altitude is not None:
@@ -132,6 +130,10 @@ class GeoRidePositionTracker(TrackerEntity):
     async def async_added_to_hass(self) -> None:
         """Démarrage : position initiale + abonnement Socket.IO."""
         await super().async_added_to_hass()
+
+        # Récupérer le socket_manager depuis hass.data (disponible ici, après setup complet)
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        self._socket_manager = entry_data.get("socket_manager")
 
         # Abonnement aux événements position via Socket.IO
         if self._socket_manager:
