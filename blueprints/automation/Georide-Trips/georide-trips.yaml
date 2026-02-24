@@ -1,0 +1,1312 @@
+blueprint:
+  name: "Moto GeoRide - Suivi complet (v21)"
+  description: |
+    # 🏍️ Moto GeoRide - Suivi complet
+
+    Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
+    Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
+
+    *Version : 2026.02.25a*
+
+    ---
+
+    ### ⛽ Autonomie carburant
+
+    L'autonomie restante est calculée en temps réel par le sensor Python `sensor.<moto>_autonomie_restante`. Ce sensor utilise une **moyenne glissante sur les 3 derniers pleins** pour affiner l'autonomie théorique au fil du temps. Dès que la valeur passe sous le seuil configuré, le switch *Faire le plein* s'active et une notification est envoyée avec un bouton **✅ Plein effectué**.
+
+    À la confirmation du plein, le bouton `button.<moto>_confirmer_le_plein` enregistre automatiquement l'odometer précis au moment du plein (via appel API déclenché après 5 min d'arrêt) et met à jour l'historique des distances inter-plein.
+
+    ### 🗺️ Notification nouveau trajet
+
+    À chaque arrêt de la moto (binary_sensor *En mouvement* → OFF), le blueprint attend que l'odometer se mette à jour puis envoie la notification si la distance dépasse le seuil configuré. Avec Socket.IO activé, la latence est quasi nulle. Sans Socket.IO, un trigger sur *Last Trip Details* est utilisé en fallback avec le bouton refresh.
+
+    ### 🔗 Entretien chaîne
+
+    Alerte basée sur les km parcourus depuis le dernier entretien. Bouton **✅ Chaîne entretenue** pour enregistrer (odometer + date).
+
+    ### 🛢️ Vidange
+
+    Alerte basée sur les km parcourus depuis la dernière vidange. Bouton **✅ Vidange effectuée** pour enregistrer (odometer + date).
+
+    ### 🔧 Révision générale
+
+    Double critère : km **ET** jours. L'alerte se déclenche dès que l'un des deux seuils est atteint. Bouton **✅ Révision effectuée** pour enregistrer.
+
+    ### 📅 Kilométrage périodique
+
+    Snapshots automatiques à minuit (jour), lundi minuit (semaine) et au jour du mois configurable (mois).
+    Les compteurs `sensor.<moto>_km_journaliers/hebdomadaires/mensuels` sont désormais calculés en Python — réactifs instantanément sans dépendre du blueprint.
+
+    ### 📊 Bilans hebdomadaire et mensuel
+
+    Envoyés à l'heure de votre choix en notification mobile et/ou persistante dans HA.
+
+    ---
+
+    ### 📋 Prérequis
+
+    - Intégration **georide_trips** v3+ installée et configurée
+    - Application **Home Assistant Companion** installée sur iPhone
+
+  domain: automation
+
+  input:
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — IDENTITÉ
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_identite:
+      name: "🏍️ Identité de la moto"
+      collapsed: false
+      input:
+        moto_nom:
+          name: "Nom de la moto"
+          description: >
+            Utilisé dans toutes les notifications.
+            **Exemples :** Tmax 530, Africa Twin, R1200GS
+          selector:
+            text:
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — CAPTEURS PRINCIPAUX
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_capteurs:
+      name: "📡 Capteurs principaux (georide_trips)"
+      collapsed: false
+      input:
+        odometer_sensor:
+          name: "Capteur kilométrage (Odometer)"
+          description: >
+            `sensor.<moto>_odometer` — kilométrage réel avec offset.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: sensor
+
+        moving_sensor:
+          name: "Capteur En mouvement (Moving)"
+          description: >
+            `binary_sensor.<moto>_en_mouvement` — fourni nativement par georide_trips v3+.
+            Passe à `off` à l'arrêt de la moto (via Socket.IO temps réel).
+          selector:
+            entity:
+              integration: georide_trips
+              domain: binary_sensor
+
+        last_trip_sensor:
+          name: "Capteur dernier trajet (Last Trip Details)"
+          description: >
+            ⚠️ Utiliser **Last Trip Details** (et non *Last Trip*).
+            Il contient l'attribut `distance_km` nécessaire aux notifications.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: sensor
+
+        btn_refresh_odometer:
+          name: "Bouton Refresh Odometer (fallback)"
+          description: >
+            `button.<moto>_refresh_odometer` — Utilisé uniquement si Socket.IO est désactivé.
+            Avec Socket.IO actif, l'odometer se met à jour automatiquement.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — CARBURANT
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_carburant:
+      name: "⛽ Carburant"
+      collapsed: true
+      input:
+        n_autonomie_totale:
+          name: "Autonomie totale (km sur un plein)"
+          description: "`number.<moto>_autonomie_totale`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_seuil_alerte:
+          name: "Seuil d'alerte autonomie (km)"
+          description: >
+            `number.<moto>_seuil_alerte_autonomie`
+            Notification déclenchée quand les km restants passent sous ce seuil.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_km_dernier_plein:
+          name: "KM au dernier plein"
+          description: "`number.<moto>_km_au_dernier_plein`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        sensor_autonomie_restante:
+          name: "Sensor autonomie restante (km)"
+          description: >
+            `sensor.<moto>_autonomie_restante`
+            Calculé en temps réel par l'intégration (moyenne glissante sur 3 pleins).
+            Utilisé pour déclencher l'alerte et afficher l'autonomie dans les bilans.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: sensor
+
+        btn_confirmer_le_plein:
+          name: "Bouton — Confirmer le plein"
+          description: >
+            `button.<moto>_confirmer_le_plein`
+            Enregistre l'odometer précis au moment du plein (via API après 5 min d'arrêt)
+            et met à jour la moyenne glissante. Désactive aussi le switch Faire le plein.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
+
+        switch_faire_le_plein:
+          name: "Switch — Faire le plein"
+          description: >
+            `switch.<moto>_faire_le_plein`
+            Activé automatiquement quand l'autonomie passe sous le seuil.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: switch
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 4 — KILOMÉTRAGE PÉRIODIQUE
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_km_periodique:
+      name: "📅 Kilométrage journalier, hebdomadaire et mensuel"
+      collapsed: true
+      input:
+        n_km_debut_journee:
+          name: "KM début journée (snapshot)"
+          description: "`number.<moto>_km_debut_journee` — Snapshot à minuit."
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_km_debut_semaine:
+          name: "KM début semaine (snapshot)"
+          description: "`number.<moto>_km_debut_semaine` — Snapshot le lundi à minuit."
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_km_debut_mois:
+          name: "KM début mois (snapshot)"
+          description: "`number.<moto>_km_debut_mois` — Snapshot au jour configuré."
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 5 — ENTRETIEN : CHAÎNE
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_chaine:
+      name: "🔗 Entretien chaîne"
+      collapsed: true
+      input:
+        n_intervalle_km_chaine:
+          name: "Intervalle km entre entretiens"
+          description: "`number.<moto>_entretien_chaine_intervalle_km`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_seuil_alerte_chaine:
+          name: "Seuil d'alerte (km restants)"
+          description: "`number.<moto>_entretien_chaine_seuil_alerte`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_km_dernier_entretien_chaine:
+          name: "KM au dernier entretien"
+          description: "`number.<moto>_entretien_chaine_km_au_dernier_entretien`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        dt_date_dernier_entretien_chaine:
+          name: "Date du dernier entretien"
+          description: "`datetime.<moto>_entretien_chaine_date_dernier_entretien`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: datetime
+
+        switch_entretien_chaine:
+          name: "Switch — Entretien chaîne à faire"
+          description: "`switch.<moto>_entretien_chaine_a_faire`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: switch
+
+        n_km_restants_chaine:
+          name: "KM restants avant entretien (diagnostic)"
+          description: "`number.<moto>_chaine_km_restants_avant_entretien`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        btn_enregistrer_chaine:
+          name: "Bouton enregistrer entretien chaîne"
+          description: >
+            Bouton natif georide_trips.
+            Déclenche la même séquence que la confirmation mobile.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 6 — ENTRETIEN : VIDANGE
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_vidange:
+      name: "🛢️ Vidange"
+      collapsed: true
+      input:
+        n_intervalle_km_vidange:
+          name: "Intervalle km entre vidanges"
+          description: "`number.<moto>_vidange_intervalle_km`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_seuil_alerte_vidange:
+          name: "Seuil d'alerte (km restants)"
+          description: "`number.<moto>_vidange_seuil_alerte`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_km_dernier_entretien_vidange:
+          name: "KM à la dernière vidange"
+          description: "`number.<moto>_vidange_km_a_la_derniere_vidange`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        dt_date_dernier_entretien_vidange:
+          name: "Date de la dernière vidange"
+          description: "`datetime.<moto>_vidange_date_derniere_vidange`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: datetime
+
+        switch_entretien_vidange:
+          name: "Switch — Vidange à faire"
+          description: "`switch.<moto>_vidange_a_faire`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: switch
+
+        n_km_restants_vidange:
+          name: "KM restants avant vidange (diagnostic)"
+          description: "`number.<moto>_vidange_km_restants_avant_vidange`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        btn_enregistrer_vidange:
+          name: "Bouton enregistrer vidange"
+          description: >
+            Bouton natif georide_trips.
+            Déclenche la même séquence que la confirmation mobile.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 7 — ENTRETIEN : RÉVISION GÉNÉRALE
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_revision:
+      name: "🔧 Révision générale"
+      collapsed: true
+      input:
+        n_intervalle_km_revision:
+          name: "Intervalle km entre révisions"
+          description: "`number.<moto>_revision_intervalle_km`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_intervalle_jours_revision:
+          name: "Intervalle maximum en jours"
+          description: >
+            `number.<moto>_revision_intervalle_jours`
+            L'alerte se déclenche si l'un des deux critères (km **ou** jours) est atteint.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_seuil_alerte_revision:
+          name: "Seuil d'alerte (km restants)"
+          description: "`number.<moto>_revision_seuil_alerte`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        n_km_dernier_entretien_revision:
+          name: "KM à la dernière révision"
+          description: "`number.<moto>_revision_km_a_la_derniere_revision`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        dt_date_dernier_entretien_revision:
+          name: "Date de la dernière révision"
+          description: "`datetime.<moto>_revision_date_derniere_revision`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: datetime
+
+        switch_entretien_revision:
+          name: "Switch — Révision à faire"
+          description: "`switch.<moto>_revision_a_faire`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: switch
+
+        n_km_restants_revision:
+          name: "KM restants avant révision (diagnostic)"
+          description: "`number.<moto>_revision_km_restants_avant_revision`"
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+        btn_enregistrer_revision:
+          name: "Bouton enregistrer révision"
+          description: >
+            Bouton natif georide_trips.
+            Déclenche la même séquence que la confirmation mobile.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 8 — NOTIFICATIONS & TRAJETS
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_notifications:
+      name: "🔔 Notifications & Trajets"
+      collapsed: false
+      input:
+        notify_service:
+          name: "Service de notification mobile"
+          description: >
+            Format : `notify.nom_du_service`
+            Retrouvez vos services dans **Outils de développement → Services** (domaine `notify`).
+          default: "notify.mobile_app_iphone_de_thomas_17pro"
+          selector:
+            text:
+
+        notif_autonomie_active:
+          name: "Activer — Alerte autonomie carburant"
+          default: true
+          selector:
+            boolean:
+
+        notif_trajet_active:
+          name: "Activer — Notification nouveau trajet"
+          default: true
+          selector:
+            boolean:
+
+        notif_chaine_active:
+          name: "Activer — Alerte entretien chaîne"
+          default: true
+          selector:
+            boolean:
+
+        notif_vidange_active:
+          name: "Activer — Alerte vidange"
+          default: true
+          selector:
+            boolean:
+
+        notif_revision_active:
+          name: "Activer — Alerte révision générale"
+          default: true
+          selector:
+            boolean:
+
+        n_seuil_distance_trajet:
+          name: "Seuil minimum pour notifier un trajet (km)"
+          description: >
+            `number.<moto>_seuil_notification_trajet`
+            Les trajets inférieurs à cette distance ne génèrent pas de notification.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: number
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 9 — ACTIONS MOBILES
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_actions:
+      name: "📲 Actions mobiles (identifiants uniques)"
+      collapsed: true
+      input:
+        action_plein:
+          name: "Action mobile — Confirmer le plein"
+          description: >
+            Identifiant unique, **différent pour chaque moto**.
+            **Exemples :** `PLEIN_TMAX530`, `PLEIN_AFRICA_TWIN`
+          selector:
+            text:
+
+        action_chaine:
+          name: "Action mobile — Confirmer entretien chaîne"
+          description: >
+            Identifiant unique par moto.
+            **Exemple :** `CHAINE_TMAX530`
+          selector:
+            text:
+
+        action_vidange:
+          name: "Action mobile — Confirmer vidange"
+          description: >
+            Identifiant unique par moto.
+            **Exemple :** `VIDANGE_TMAX530`
+          selector:
+            text:
+
+        action_revision:
+          name: "Action mobile — Confirmer révision"
+          description: >
+            Identifiant unique par moto.
+            **Exemple :** `REVISION_TMAX530`
+          selector:
+            text:
+
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 9b — ALARMES
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_alarmes:
+      name: "🚨 Alarmes"
+      collapsed: true
+      input:
+        last_alarm_sensor:
+          name: "Capteur dernière alarme (Last Alarm)"
+          description: >
+            `sensor.<moto>_last_alarm` — fourni par georide_trips v3+.
+            Change d'état à chaque nouvelle alarme reçue via Socket.IO.
+            Expose aussi `timestamp` et `device_name` en attributs.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: sensor
+
+        notif_alarme_crash:
+          name: "Activer — Alerte chute/crash"
+          description: "Notifie pour les alarmes `alarm_crash` et `alarm_crashParking`."
+          default: true
+          selector:
+            boolean:
+
+        notif_alarme_vol:
+          name: "Activer — Alerte vibration / mouvement suspect"
+          description: "Notifie pour l'alarme `alarm_vibration` (détection de mouvement suspect)."
+          default: true
+          selector:
+            boolean:
+
+        notif_alarme_alimentation:
+          name: "Activer — Alerte coupure alimentation"
+          description: "Notifie pour les alarmes `alarm_powerCut` et `alarm_powerUncut`."
+          default: false
+          selector:
+            boolean:
+
+        notif_alarme_autres:
+          name: "Activer — Autres alarmes (zone, batterie, température…)"
+          description: >
+            Notifie pour les alarmes non couvertes ci-dessus :
+            `alarm_exitZone`, `alarm_batteryWarning`, `alarm_temperatureWarning`,
+            `alarm_deviceOffline`, `alarm_deviceOnline`, `alarm_magnetOn/Off`, `alarm_sonorAlarmOn`.
+          default: false
+          selector:
+            boolean:
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 10 — BILAN HEBDOMADAIRE
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_hebdo:
+      name: "📊 Bilan hebdomadaire"
+      collapsed: true
+      input:
+        activer_stats_hebdo:
+          name: "Activer le bilan hebdomadaire"
+          default: true
+          selector:
+            boolean:
+
+        heure_stats_hebdo:
+          name: "Heure d'envoi du bilan hebdomadaire"
+          default: "09:00:00"
+          selector:
+            time:
+
+        stats_hebdo_mobile:
+          name: "Bilan hebdo — Notification mobile"
+          default: true
+          selector:
+            boolean:
+
+        stats_hebdo_persistante:
+          name: "Bilan hebdo — Notification persistante dans HA"
+          default: true
+          selector:
+            boolean:
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 11 — BILAN MENSUEL
+    # ════════════════════════════════════════════════════════════════════════
+
+    section_mensuel:
+      name: "📊 Bilan mensuel"
+      collapsed: true
+      input:
+        activer_stats_mensuelles:
+          name: "Activer le bilan mensuel"
+          default: true
+          selector:
+            boolean:
+
+        jour_stats_mensuelles:
+          name: "Jour du mois pour le bilan mensuel"
+          description: "Entre 1 et 28 pour couvrir tous les mois."
+          default: 1
+          selector:
+            number:
+              min: 1
+              max: 28
+              step: 1
+              mode: box
+
+        heure_stats_mensuelles:
+          name: "Heure d'envoi du bilan mensuel"
+          default: "09:00:00"
+          selector:
+            time:
+
+        stats_mensuelles_mobile:
+          name: "Bilan mensuel — Notification mobile"
+          default: true
+          selector:
+            boolean:
+
+        stats_mensuelles_persistante:
+          name: "Bilan mensuel — Notification persistante dans HA"
+          default: true
+          selector:
+            boolean:
+
+# ════════════════════════════════════════════════════════════════════════════
+# VARIABLES GLOBALES
+# ════════════════════════════════════════════════════════════════════════════
+variables:
+  moto_nom: !input moto_nom
+  odometer_sensor: !input odometer_sensor
+  n_autonomie_totale: !input n_autonomie_totale
+  n_seuil_alerte: !input n_seuil_alerte
+  n_km_dernier_plein: !input n_km_dernier_plein
+  sensor_autonomie_restante: !input sensor_autonomie_restante
+  btn_confirmer_le_plein: !input btn_confirmer_le_plein
+  switch_faire_le_plein: !input switch_faire_le_plein
+  switch_entretien_chaine: !input switch_entretien_chaine
+  switch_entretien_vidange: !input switch_entretien_vidange
+  switch_entretien_revision: !input switch_entretien_revision
+  n_km_restants_chaine: !input n_km_restants_chaine
+  n_km_restants_vidange: !input n_km_restants_vidange
+  n_km_restants_revision: !input n_km_restants_revision
+  n_km_debut_journee: !input n_km_debut_journee
+  n_km_debut_semaine: !input n_km_debut_semaine
+  n_km_debut_mois: !input n_km_debut_mois
+  n_intervalle_km_chaine: !input n_intervalle_km_chaine
+  n_seuil_alerte_chaine: !input n_seuil_alerte_chaine
+  n_km_dernier_entretien_chaine: !input n_km_dernier_entretien_chaine
+  dt_date_dernier_entretien_chaine: !input dt_date_dernier_entretien_chaine
+  n_intervalle_km_vidange: !input n_intervalle_km_vidange
+  n_seuil_alerte_vidange: !input n_seuil_alerte_vidange
+  n_km_dernier_entretien_vidange: !input n_km_dernier_entretien_vidange
+  dt_date_dernier_entretien_vidange: !input dt_date_dernier_entretien_vidange
+  n_intervalle_km_revision: !input n_intervalle_km_revision
+  n_intervalle_jours_revision: !input n_intervalle_jours_revision
+  n_seuil_alerte_revision: !input n_seuil_alerte_revision
+  n_km_dernier_entretien_revision: !input n_km_dernier_entretien_revision
+  dt_date_dernier_entretien_revision: !input dt_date_dernier_entretien_revision
+  n_seuil_distance_trajet: !input n_seuil_distance_trajet
+  notify_service: !input notify_service
+  notif_autonomie_active: !input notif_autonomie_active
+  notif_trajet_active: !input notif_trajet_active
+  notif_chaine_active: !input notif_chaine_active
+  notif_vidange_active: !input notif_vidange_active
+  notif_revision_active: !input notif_revision_active
+  action_plein: !input action_plein
+  action_chaine: !input action_chaine
+  action_vidange: !input action_vidange
+  action_revision: !input action_revision
+  btn_enregistrer_chaine: !input btn_enregistrer_chaine
+  btn_enregistrer_vidange: !input btn_enregistrer_vidange
+  btn_enregistrer_revision: !input btn_enregistrer_revision
+  btn_refresh_odometer: !input btn_refresh_odometer
+  activer_stats_hebdo: !input activer_stats_hebdo
+  activer_stats_mensuelles: !input activer_stats_mensuelles
+  stats_hebdo_mobile: !input stats_hebdo_mobile
+  stats_hebdo_persistante: !input stats_hebdo_persistante
+  stats_mensuelles_mobile: !input stats_mensuelles_mobile
+  stats_mensuelles_persistante: !input stats_mensuelles_persistante
+  jour_stats_mensuelles: !input jour_stats_mensuelles
+  last_alarm_sensor: !input last_alarm_sensor
+  notif_alarme_crash: !input notif_alarme_crash
+  notif_alarme_vol: !input notif_alarme_vol
+  notif_alarme_alimentation: !input notif_alarme_alimentation
+  notif_alarme_autres: !input notif_alarme_autres
+
+# ════════════════════════════════════════════════════════════════════════════
+# TRIGGERS
+# ════════════════════════════════════════════════════════════════════════════
+triggers:
+
+  - trigger: state
+    entity_id: !input odometer_sensor
+    id: odometer_change
+
+  - trigger: state
+    entity_id: !input moving_sensor
+    to: "off"
+    id: moto_arretee
+    not_from:
+      - "unavailable"
+      - "unknown"
+
+  - trigger: state
+    entity_id: !input last_trip_sensor
+    id: nouveau_trajet
+
+  - trigger: time_pattern
+    minutes: "/30"
+    id: toutes_les_30min
+
+  - trigger: time
+    at: "00:00:00"
+    id: minuit
+
+  - trigger: time
+    at: !input heure_stats_hebdo
+    id: stats_hebdo
+
+  - trigger: time
+    at: !input heure_stats_mensuelles
+    id: stats_mensuelles
+
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: !input action_plein
+    id: confirm_plein
+
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: !input action_chaine
+    id: confirm_chaine
+
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: !input action_vidange
+    id: confirm_vidange
+
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: !input action_revision
+    id: confirm_revision
+
+  - trigger: state
+    entity_id: !input btn_enregistrer_chaine
+    id: confirm_chaine
+    not_from:
+      - "unavailable"
+      - "unknown"
+
+  - trigger: state
+    entity_id: !input btn_enregistrer_vidange
+    id: confirm_vidange
+    not_from:
+      - "unavailable"
+      - "unknown"
+
+  - trigger: state
+    entity_id: !input btn_enregistrer_revision
+    id: confirm_revision
+    not_from:
+      - "unavailable"
+      - "unknown"
+
+  - trigger: state
+    entity_id: !input btn_refresh_odometer
+    id: odometer_change
+    not_from:
+      - "unavailable"
+      - "unknown"
+
+  - trigger: state
+    entity_id: !input last_alarm_sensor
+    id: nouvelle_alarme
+    not_from:
+      - "unavailable"
+      - "unknown"
+
+# ════════════════════════════════════════════════════════════════════════════
+# ACTIONS
+# ════════════════════════════════════════════════════════════════════════════
+actions:
+  - choose:
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ⛽ AUTONOMIE + 🔗 CHAÎNE + 🛢️ VIDANGE + 🔧 RÉVISION
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id:
+            - odometer_change
+            - toutes_les_30min
+            - moto_arretee
+      sequence:
+
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+            km_restants: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+            seuil_alerte: "{{ states(n_seuil_alerte) | float(30) }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ km_restants <= seuil_alerte }}"
+          then:
+            - variables:
+                plein_switch_etait_off: "{{ is_state(switch_faire_le_plein, 'off') }}"
+            - action: switch.turn_on
+              target:
+                entity_id: !input switch_faire_le_plein
+            - if:
+                - condition: template
+                  value_template: "{{ notif_autonomie_active and plein_switch_etait_off }}"
+              then:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "⛽ Plein à faire — {{ moto_nom }}"
+                    message: >
+                      Il reste {{ km_restants }} km d'autonomie.
+                      Kilométrage actuel : {{ odometer_km | round(0) }} km.
+                    data:
+                      actions:
+                        - action: "{{ action_plein }}"
+                          title: "✅ Plein effectué"
+
+        - variables:
+            km_depuis_chaine: "{{ [odometer_km - states(n_km_dernier_entretien_chaine) | float(0), 0] | max | round(0) }}"
+            km_restants_chaine: "{{ [states(n_intervalle_km_chaine) | float(500) - km_depuis_chaine, 0] | max | round(0) }}"
+
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_restants_chaine
+          data:
+            value: "{{ km_restants_chaine }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ km_restants_chaine <= states(n_seuil_alerte_chaine) | float(100) }}"
+          then:
+            - variables:
+                chaine_switch_etait_off: "{{ is_state(switch_entretien_chaine, 'off') }}"
+            - action: switch.turn_on
+              target:
+                entity_id: !input switch_entretien_chaine
+            - if:
+                - condition: template
+                  value_template: "{{ notif_chaine_active and chaine_switch_etait_off }}"
+              then:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "🔗 Entretien chaîne — {{ moto_nom }}"
+                    message: >
+                      {{ km_depuis_chaine }} km depuis le dernier entretien.
+                      Il reste {{ km_restants_chaine }} km avant l'échéance.
+                      Dernier entretien : {{ (states(dt_date_dernier_entretien_chaine) | as_datetime | as_local).strftime('%d/%m/%Y') }}.
+                    data:
+                      actions:
+                        - action: "{{ action_chaine }}"
+                          title: "✅ Chaîne entretenue"
+
+        - variables:
+            km_depuis_vidange: "{{ [odometer_km - states(n_km_dernier_entretien_vidange) | float(0), 0] | max | round(0) }}"
+            km_restants_vidange: "{{ [states(n_intervalle_km_vidange) | float(6000) - km_depuis_vidange, 0] | max | round(0) }}"
+
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_restants_vidange
+          data:
+            value: "{{ km_restants_vidange }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ km_restants_vidange <= states(n_seuil_alerte_vidange) | float(500) }}"
+          then:
+            - variables:
+                vidange_switch_etait_off: "{{ is_state(switch_entretien_vidange, 'off') }}"
+            - action: switch.turn_on
+              target:
+                entity_id: !input switch_entretien_vidange
+            - if:
+                - condition: template
+                  value_template: "{{ notif_vidange_active and vidange_switch_etait_off }}"
+              then:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "🛢️ Vidange à faire — {{ moto_nom }}"
+                    message: >
+                      {{ km_depuis_vidange }} km depuis la dernière vidange.
+                      Il reste {{ km_restants_vidange }} km avant l'échéance.
+                      Dernière vidange : {{ (states(dt_date_dernier_entretien_vidange) | as_datetime | as_local).strftime('%d/%m/%Y') }}.
+                    data:
+                      actions:
+                        - action: "{{ action_vidange }}"
+                          title: "✅ Vidange effectuée"
+
+        - variables:
+            km_depuis_revision: "{{ [odometer_km - states(n_km_dernier_entretien_revision) | float(0), 0] | max | round(0) }}"
+            km_restants_revision: "{{ [states(n_intervalle_km_revision) | float(6000) - km_depuis_revision, 0] | max | round(0) }}"
+            jours_depuis_revision: "{{ ((now() - (states(dt_date_dernier_entretien_revision) | as_datetime | as_local)).days) | int(0) }}"
+            jours_restants_revision: "{{ [states(n_intervalle_jours_revision) | int(365) - jours_depuis_revision, 0] | max }}"
+            alerte_revision_km: "{{ km_restants_revision <= states(n_seuil_alerte_revision) | float(500) }}"
+            alerte_revision_jours: "{{ jours_restants_revision <= 30 }}"
+
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_restants_revision
+          data:
+            value: "{{ km_restants_revision }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ alerte_revision_km or alerte_revision_jours }}"
+          then:
+            - variables:
+                revision_switch_etait_off: "{{ is_state(switch_entretien_revision, 'off') }}"
+            - action: switch.turn_on
+              target:
+                entity_id: !input switch_entretien_revision
+            - if:
+                - condition: template
+                  value_template: "{{ notif_revision_active and revision_switch_etait_off }}"
+              then:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "🔧 Révision à prévoir — {{ moto_nom }}"
+                    message: >
+                      {% if alerte_revision_km and alerte_revision_jours %}
+                      Révision urgente : km ET délai atteints.
+                      {% elif alerte_revision_km %}
+                      Révision proche par kilométrage.
+                      {% else %}
+                      Révision proche par délai.
+                      {% endif %}
+                      {{ km_depuis_revision }} km parcourus ({{ km_restants_revision }} km restants).
+                      {{ jours_depuis_revision }} jours écoulés ({{ jours_restants_revision }} jours restants).
+                      Dernière révision : {{ (states(dt_date_dernier_entretien_revision) | as_datetime | as_local).strftime('%d/%m/%Y') }}.
+                    data:
+                      actions:
+                        - action: "{{ action_revision }}"
+                          title: "✅ Révision effectuée"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🗺️ NOUVEAU TRAJET
+    # Déclenchée par moto_arretee (binary_sensor moving → OFF, via Socket.IO)
+    # ou par nouveau_trajet (last_trip_sensor change, fallback sans Socket.IO).
+    #
+    # Avec Socket.IO : l'odometer est déjà à jour quand moving passe à OFF.
+    # Sans Socket.IO  : refresh via bouton + délai (fallback automatique).
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id:
+            - moto_arretee
+            - nouveau_trajet
+        - condition: template
+          value_template: "{{ notif_trajet_active }}"
+      sequence:
+        # Lire la distance du dernier trajet
+        - variables:
+            distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
+
+        # Sortie anticipée si trajet trop court
+        - condition: template
+          value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
+
+        # Fallback : si déclenché par nouveau_trajet (pas Socket.IO),
+        # forcer refresh odometer + attendre 10s
+        - if:
+            - condition: trigger
+              id: nouveau_trajet
+          then:
+            - action: button.press
+              target:
+                entity_id: !input btn_refresh_odometer
+            - delay:
+                seconds: 10
+
+        # Lire l'odometer (à jour dans tous les cas)
+        - variables:
+            odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
+
+        # Notification
+        - action: "{{ notify_service }}"
+          data:
+            title: "🏍️ Trajet — {{ moto_nom }}"
+            message: >
+              {{ distance_trajet | round(1) }} km parcourus.
+              Autonomie restante : {{ states(sensor_autonomie_restante) | float(0) | round(1) }} km.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🌙 RESET MINUIT
+    # Met à jour les snapshots de début de période.
+    # Les compteurs km_journaliers/hebdomadaires/mensuels sont calculés
+    # automatiquement par les sensors Python de l'intégration georide_trips.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: minuit
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_debut_journee
+          data:
+            value: "{{ odometer_km }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ now().weekday() == 0 }}"
+          then:
+            - action: number.set_value
+              target:
+                entity_id: !input n_km_debut_semaine
+              data:
+                value: "{{ odometer_km }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ now().day == jour_stats_mensuelles | int(1) }}"
+          then:
+            - action: number.set_value
+              target:
+                entity_id: !input n_km_debut_mois
+              data:
+                value: "{{ odometer_km }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📊 BILAN HEBDOMADAIRE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: stats_hebdo
+        - condition: template
+          value_template: "{{ activer_stats_hebdo and now().weekday() == 0 }}"
+      sequence:
+        - variables:
+            km_semaine: "{{ [states(odometer_sensor) | float(0) - states(n_km_debut_semaine) | float(0), 0] | max | round(1) }}"
+            odometer_km: "{{ states(odometer_sensor) | float(0) | round(0) }}"
+            km_restants_notif: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+            message_hebdo: >
+              Bilan semaine — {{ moto_nom }} :
+              {{ km_semaine }} km cette semaine.
+              Kilométrage total : {{ odometer_km }} km.
+              Autonomie restante : {{ km_restants_notif }} km.
+        - if:
+            - condition: template
+              value_template: "{{ stats_hebdo_mobile }}"
+          then:
+            - action: "{{ notify_service }}"
+              data:
+                title: "📊 Bilan hebdo — {{ moto_nom }}"
+                message: "{{ message_hebdo }}"
+        - if:
+            - condition: template
+              value_template: "{{ stats_hebdo_persistante }}"
+          then:
+            - action: persistent_notification.create
+              data:
+                title: "📊 Bilan hebdo — {{ moto_nom }}"
+                message: "{{ message_hebdo }}"
+                notification_id: "stats_hebdo_{{ moto_nom | slugify }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📊 BILAN MENSUEL
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: stats_mensuelles
+        - condition: template
+          value_template: "{{ activer_stats_mensuelles and now().day == jour_stats_mensuelles | int(1) }}"
+      sequence:
+        - variables:
+            km_mois: "{{ [states(odometer_sensor) | float(0) - states(n_km_debut_mois) | float(0), 0] | max | round(1) }}"
+            odometer_km: "{{ states(odometer_sensor) | float(0) | round(0) }}"
+            km_restants_notif: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+            message_mensuel: >
+              Bilan mensuel — {{ moto_nom }} :
+              {{ km_mois }} km ce mois.
+              Kilométrage total : {{ odometer_km }} km.
+              Autonomie restante : {{ km_restants_notif }} km.
+        - if:
+            - condition: template
+              value_template: "{{ stats_mensuelles_mobile }}"
+          then:
+            - action: "{{ notify_service }}"
+              data:
+                title: "📊 Bilan mensuel — {{ moto_nom }}"
+                message: "{{ message_mensuel }}"
+        - if:
+            - condition: template
+              value_template: "{{ stats_mensuelles_persistante }}"
+          then:
+            - action: persistent_notification.create
+              data:
+                title: "📊 Bilan mensuel — {{ moto_nom }}"
+                message: "{{ message_mensuel }}"
+                notification_id: "stats_mensuelles_{{ moto_nom | slugify }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — PLEIN EFFECTUÉ
+    # Le bouton Python btn_confirmer_le_plein gère tout :
+    #   - désactive switch_faire_le_plein immédiatement
+    #   - attend 5 min d'arrêt puis appelle l'API pour l'odometer précis
+    #   - met à jour km_au_dernier_plein et la moyenne glissante inter-plein
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_plein
+      sequence:
+        - action: button.press
+          target:
+            entity_id: !input btn_confirmer_le_plein
+        - action: "{{ notify_service }}"
+          data:
+            title: "⛽ Plein en cours d'enregistrement — {{ moto_nom }}"
+            message: >
+              Le plein sera enregistré après confirmation d'arrêt (sous 5 min).
+              L'autonomie sera recalculée automatiquement.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — CHAÎNE ENTRETENUE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_chaine
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_dernier_entretien_chaine
+          data:
+            value: "{{ odometer_km }}"
+        - action: datetime.set_value
+          target:
+            entity_id: !input dt_date_dernier_entretien_chaine
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        - action: switch.turn_off
+          target:
+            entity_id: !input switch_entretien_chaine
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Chaîne entretenue — {{ moto_nom }}"
+            message: >
+              Entretien chaîne enregistré à {{ odometer_km | round(0) }} km
+              le {{ now().strftime('%d/%m/%Y') }}.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — VIDANGE EFFECTUÉE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_vidange
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_dernier_entretien_vidange
+          data:
+            value: "{{ odometer_km }}"
+        - action: datetime.set_value
+          target:
+            entity_id: !input dt_date_dernier_entretien_vidange
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        - action: switch.turn_off
+          target:
+            entity_id: !input switch_entretien_vidange
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Vidange effectuée — {{ moto_nom }}"
+            message: >
+              Vidange enregistrée à {{ odometer_km | round(0) }} km
+              le {{ now().strftime('%d/%m/%Y') }}.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — RÉVISION EFFECTUÉE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_revision
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_dernier_entretien_revision
+          data:
+            value: "{{ odometer_km }}"
+        - action: datetime.set_value
+          target:
+            entity_id: !input dt_date_dernier_entretien_revision
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        - action: switch.turn_off
+          target:
+            entity_id: !input switch_entretien_revision
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Révision effectuée — {{ moto_nom }}"
+            message: >
+              Révision enregistrée à {{ odometer_km | round(0) }} km
+              le {{ now().strftime('%d/%m/%Y') }}.
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🚨 ALARME REÇUE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: nouvelle_alarme
+      sequence:
+        - variables:
+            alarm_type: "{{ states(last_alarm_sensor) }}"
+            alarm_timestamp: "{{ state_attr(last_alarm_sensor, 'timestamp') | default('') }}"
+            alarm_device: "{{ state_attr(last_alarm_sensor, 'device_name') | default(moto_nom) }}"
+            is_crash: "{{ alarm_type in ['alarm_crash', 'alarm_crashParking'] }}"
+            is_vibration: "{{ alarm_type == 'alarm_vibration' }}"
+            is_power: "{{ alarm_type in ['alarm_powerCut', 'alarm_powerUncut'] }}"
+            alarm_label: >
+              {% if alarm_type == 'alarm_crash' %}💥 Chute détectée
+              {% elif alarm_type == 'alarm_crashParking' %}💥 Chute (parking)
+              {% elif alarm_type == 'alarm_vibration' %}🔔 Vibration / Mouvement suspect
+              {% elif alarm_type == 'alarm_powerCut' %}🔌 Coupure alimentation
+              {% elif alarm_type == 'alarm_powerUncut' %}🔌 Alimentation rétablie
+              {% elif alarm_type == 'alarm_exitZone' %}📍 Sortie de zone
+              {% elif alarm_type == 'alarm_batteryWarning' %}🪫 Batterie faible
+              {% elif alarm_type == 'alarm_temperatureWarning' %}🌡️ Alerte température
+              {% elif alarm_type == 'alarm_deviceOffline' %}📵 Tracker hors ligne
+              {% elif alarm_type == 'alarm_deviceOnline' %}📶 Tracker en ligne
+              {% elif alarm_type == 'alarm_magnetOn' %}🧲 Aimant détecté
+              {% elif alarm_type == 'alarm_magnetOff' %}🧲 Aimant retiré
+              {% elif alarm_type == 'alarm_sonorAlarmOn' %}🔊 Alarme sonore déclenchée
+              {% else %}⚠️ Alarme : {{ alarm_type }}
+              {% endif %}
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_crash and is_crash }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+                    data:
+                      push:
+                        sound: "default"
+                        interruption-level: "critical"
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_vol and is_vibration }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_alimentation and is_power }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_autres and not is_crash and not is_vibration and not is_power }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+
+mode: queued
+max: 10
