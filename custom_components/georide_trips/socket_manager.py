@@ -227,8 +227,9 @@ class GeoRideSocketManager:
                 {
                     "tracker_id": str(data.get("trackerId", "")),
                     "device_id": str(data.get("trackerId", "")),
-                    "type": data.get("type", ""),
-                    "device_name": data.get("device_name", ""),
+                    # GeoRide envoie le type dans 'name', fallback sur 'type'
+                    "type": data.get("name") or data.get("type", ""),
+                    "device_name": data.get("trackerName") or data.get("device_name", ""),
                 },
             )
 
