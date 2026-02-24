@@ -7,39 +7,44 @@ Entités number rattachées au device de chaque moto :
 - seuil_alerte_autonomie        : km restants pour déclencher l'alerte (config)
 - km_dernier_plein              : snapshot odometer au dernier plein
 - km_restants_avant_plein       : autonomie restante calculée (diagnostic)
+- km_plein_hist_1/2/3           : historique FIFO des 3 dernières distances inter-plein
+- autonomie_moyenne_calculee    : moyenne glissante sur 3 pleins (diagnostic)
+- nb_pleins_enregistres         : compteur de pleins confirmés
 
 ── Kilométrage périodique ─────────────────────────────────────────
 - km_debut_journee              : snapshot odometer à minuit (diagnostic)
-- km_journaliers                : km parcourus aujourd'hui (diagnostic)
 - km_debut_semaine              : snapshot odometer lundi minuit (diagnostic)
-- km_hebdomadaires              : km parcourus cette semaine (diagnostic)
 - km_debut_mois                 : snapshot odometer 1er du mois (diagnostic)
-- km_mensuels                   : km parcourus ce mois (diagnostic)
+  → km_journaliers / km_hebdomadaires / km_mensuels : calculés en Python (sensor.py)
 
-── Entretien - Chaîne ────────────────────────────────────────────
+── Entretien Chaîne ──────────────────────────────────────────────
 - intervalle_km_chaine          : km entre deux entretiens (config)
 - seuil_alerte_chaine           : km avant échéance pour alerter (config)
 - km_dernier_entretien_chaine   : snapshot odometer au dernier entretien (config)
 - km_restants_chaine            : km restants avant échéance (diagnostic)
 
-── Entretien - Vidange ───────────────────────────────────────────
+── Entretien Vidange ─────────────────────────────────────────────
 - intervalle_km_vidange         : km entre deux vidanges (config)
 - seuil_alerte_vidange          : km avant échéance pour alerter (config)
 - km_dernier_entretien_vidange  : snapshot odometer à la dernière vidange (config)
 - km_restants_vidange           : km restants avant échéance (diagnostic)
 
-── Entretien - Révision ──────────────────────────────────────────
+── Entretien Révision ────────────────────────────────────────────
 - intervalle_km_revision            : km entre deux révisions (config)
 - intervalle_jours_revision         : jours max entre révisions (config)
 - seuil_alerte_revision             : km avant échéance pour alerter (config)
 - km_dernier_entretien_revision     : snapshot odometer à la dernière révision (config)
-- km_restants_revision              : km restants avant échéance (diagnostic)
+- km_restants_avant_entretien_revision : km restants avant échéance (diagnostic)
 
 ── Trajets ───────────────────────────────────────────────────────
 - seuil_distance_trajet         : distance minimale pour notifier (config)
 
 ── Offset ────────────────────────────────────────────────────────
 - odometer_offset               : décalage kilométrage (km avant tracker)
+
+── Plein en attente (usage interne) ──────────────────────────────
+- plein_pending_timestamp       : epoch Unix du moment du plein (0 = pas de plein en attente)
+- plein_pending_odometer        : odometer provisoire au moment du plein
 """
 import logging
 
@@ -79,11 +84,10 @@ NUMBER_DESCRIPTIONS = [
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
 
-
     # ── Carburant ─────────────────────────────────────────────────────────────
     {
         "key": "autonomie_totale",
-        "name": "Autonomie totale",
+        "name": "Carburant - Autonomie totale",
         "icon": "mdi:gas-station",
         "unit": UnitOfLength.KILOMETERS,
         "min": 50, "max": 800, "step": 1, "default": 150,
@@ -92,7 +96,7 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "seuil_alerte_autonomie",
-        "name": "Seuil alerte autonomie",
+        "name": "Carburant - Seuil alerte autonomie",
         "icon": "mdi:alert-circle",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200, "step": 5, "default": 30,
@@ -101,19 +105,76 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "km_dernier_plein",
-        "name": "KM au dernier plein",
+        "name": "Carburant - KM au dernier plein",
         "icon": "mdi:gas-station-outline",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": None,
     },
+    # ── Moyenne glissante pleins ──────────────────────────────────────────────
     {
-        "key": "km_restants_avant_plein",
-        "name": "KM restants avant plein",
-        "icon": "mdi:map-marker-distance",
+        "key": "km_plein_hist_1",
+        "name": "Carburant - Distance inter-plein (plein n-1)",
+        "icon": "mdi:gas-station",
         "unit": UnitOfLength.KILOMETERS,
-        "min": -100, "max": 800, "step": 1, "default": 0,
+        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.DIAGNOSTIC,
+    },
+    {
+        "key": "km_plein_hist_2",
+        "name": "Carburant - Distance inter-plein (plein n-2)",
+        "icon": "mdi:gas-station",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.DIAGNOSTIC,
+    },
+    {
+        "key": "km_plein_hist_3",
+        "name": "Carburant - Distance inter-plein (plein n-3)",
+        "icon": "mdi:gas-station",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.DIAGNOSTIC,
+    },
+    {
+        "key": "autonomie_moyenne_calculee",
+        "name": "Carburant - Autonomie moyenne calculée",
+        "icon": "mdi:gas-station-outline",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.DIAGNOSTIC,
+    },
+    {
+        "key": "nb_pleins_enregistres",
+        "name": "Carburant - Nombre de pleins enregistrés",
+        "icon": "mdi:counter",
+        "unit": None,
+        "min": 0, "max": 9_999, "step": 1, "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.DIAGNOSTIC,
+    },
+
+    # ── Plein en attente (usage interne) ─────────────────────────────────────
+    {
+        "key": "plein_pending_timestamp",
+        "name": "Plein - Timestamp en attente",
+        "icon": "mdi:clock-outline",
+        "unit": "s",
+        "min": 0, "max": 9_999_999_999, "step": 1, "default": 0,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.DIAGNOSTIC,
+    },
+    {
+        "key": "plein_pending_odometer",
+        "name": "Plein - Odometer provisoire",
+        "icon": "mdi:gas-station-outline",
+        "unit": UnitOfLength.KILOMETERS,
+        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
@@ -129,29 +190,11 @@ NUMBER_DESCRIPTIONS = [
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
     {
-        "key": "km_journaliers",
-        "name": "KM journaliers",
-        "icon": "mdi:counter",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 5_000, "step": 0.1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
-    {
         "key": "km_debut_semaine",
         "name": "KM début semaine",
         "icon": "mdi:calendar-week",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200_000, "step": 0.1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
-    {
-        "key": "km_hebdomadaires",
-        "name": "KM hebdomadaires",
-        "icon": "mdi:calendar-week",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 10_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
@@ -164,20 +207,11 @@ NUMBER_DESCRIPTIONS = [
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
-    {
-        "key": "km_mensuels",
-        "name": "KM mensuels",
-        "icon": "mdi:calendar-month",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 20_000, "step": 0.1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
 
-    # ── Entretien - Chaîne ────────────────────────────────────────────────────
+    # ── Entretien Chaîne ──────────────────────────────────────────────────────
     {
         "key": "intervalle_km_chaine",
-        "name": "Entretien chaîne - Intervalle km",
+        "name": "Entretien Chaîne - Intervalle km",
         "icon": "mdi:link-variant",
         "unit": UnitOfLength.KILOMETERS,
         "min": 100, "max": 10_000, "step": 100, "default": 500,
@@ -186,7 +220,7 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "seuil_alerte_chaine",
-        "name": "Entretien chaîne - Seuil alerte",
+        "name": "Entretien Chaîne - Seuil alerte",
         "icon": "mdi:link-variant-remove",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 500, "step": 50, "default": 100,
@@ -195,27 +229,17 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "km_dernier_entretien_chaine",
-        "name": "Entretien chaîne - KM au dernier entretien",
+        "name": "Entretien Chaîne - KM au dernier entretien",
         "icon": "mdi:link-variant-plus",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-    {
-        "key": "km_restants_chaine",
-        "name": "Entretien chaîne - KM restants avant entretien",
-        "icon": "mdi:link-variant-plus",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": -100, "max": 60_000, "step": 1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
-
-    # ── Entretien - Révision ──────────────────────────────────────────────────
+    # ── Entretien Révision ────────────────────────────────────────────────────
     {
         "key": "intervalle_km_revision",
-        "name": "Révision - Intervalle km",
+        "name": "Entretien Révision - Intervalle km",
         "icon": "mdi:wrench-clock",
         "unit": UnitOfLength.KILOMETERS,
         "min": 1_000, "max": 50_000, "step": 500, "default": 6_000,
@@ -224,16 +248,16 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "intervalle_jours_revision",
-        "name": "Révision - Intervalle jours",
+        "name": "Entretien Révision - Intervalle jours",
         "icon": "mdi:calendar-clock",
-        "unit": "d",   # jours
+        "unit": "d",
         "min": 30, "max": 730, "step": 30, "default": 365,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
     {
         "key": "seuil_alerte_revision",
-        "name": "Révision - Seuil alerte",
+        "name": "Entretien Révision - Seuil alerte",
         "icon": "mdi:wrench-outline",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 2_000, "step": 100, "default": 500,
@@ -242,27 +266,17 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "km_dernier_entretien_revision",
-        "name": "Révision - KM à la dernière révision",
+        "name": "Entretien Révision - KM à la dernière révision",
         "icon": "mdi:wrench-check",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-    {
-        "key": "km_restants_avant_entretien_revision",
-        "name": "Révision - KM restants avant revision",
-        "icon": "mdi:wrench-check",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": -100, "max": 60_000, "step": 1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
-
-    # ── Entretien - Vidange ──────────────────────────────────────────────────
+    # ── Entretien Vidange ─────────────────────────────────────────────────────
     {
         "key": "intervalle_km_vidange",
-        "name": "Vidange - Intervalle km",
+        "name": "Entretien Vidange - Intervalle km",
         "icon": "mdi:oil",
         "unit": UnitOfLength.KILOMETERS,
         "min": 1_000, "max": 50_000, "step": 500, "default": 6_000,
@@ -271,7 +285,7 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "seuil_alerte_vidange",
-        "name": "Vidange - Seuil alerte",
+        "name": "Entretien Vidange - Seuil alerte",
         "icon": "mdi:oil-level",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 2_000, "step": 100, "default": 500,
@@ -280,24 +294,14 @@ NUMBER_DESCRIPTIONS = [
     },
     {
         "key": "km_dernier_entretien_vidange",
-        "name": "Vidange - KM à la dernière vidange",
+        "name": "Entretien Vidange - KM à la dernière vidange",
         "icon": "mdi:oil-check",
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
-    {
-        "key": "km_restants_vidange",
-        "name": "Vidange - KM restants avant vidange",
-        "icon": "mdi:oil-check",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": -100, "max": 60_000, "step": 1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
-
-        # ── Trajets ───────────────────────────────────────────────────────────────
+    # ── Trajets ───────────────────────────────────────────────────────────────
     {
         "key": "seuil_distance_trajet",
         "name": "Seuil notification trajet",
