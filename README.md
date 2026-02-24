@@ -118,7 +118,7 @@ socket.georide.com ──► Socket.IO ──► Position, mouvement, alarmes (t
 |---|---|---|
 | `*_tracker_status` | Statut du tracker (online / offline) | — |
 | `*_external_battery` | Niveau de batterie externe (moto) | V |
-| `*_internal_battery` | Niveau de batterie interne (tracker) | % |
+| `*_internal_battery` | Niveau de batterie interne (tracker) | V |
 | `*_last_alarm` | Dernière alarme reçue via Socket.IO | — |
 
 ### Binary Sensors (`binary_sensor.*`)
