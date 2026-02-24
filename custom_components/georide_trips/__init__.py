@@ -37,11 +37,20 @@ PLATFORMS = [
 ]
 
 SERVICE_SET_ODOMETER = "set_odometer"
+SERVICE_GET_TRIPS = "get_trips"
 
 SET_ODOMETER_SCHEMA = vol.Schema(
     {
         vol.Required("entity_id"): cv.entity_id,
         vol.Required("value"): vol.Coerce(float),
+    }
+)
+
+GET_TRIPS_SCHEMA = vol.Schema(
+    {
+        vol.Required("tracker_id"): cv.string,
+        vol.Optional("from_date"): cv.string,
+        vol.Optional("to_date"): cv.string,
     }
 )
 
@@ -119,7 +128,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         lifetime_coordinators[tracker_id] = lifetime_coordinator
         tracker_status_coordinators[tracker_id] = status_coordinator
 
-    # Store all data
+    # Créer le socket_manager AVANT le setup des plateformes
+    # pour que les entités puissent s'y abonner dans async_added_to_hass
+    socket_manager = None
+    if socketio_enabled:
+        from .socket_manager import GeoRideSocketManager
+        tracker_ids = [str(t.get("trackerId")) for t in trackers]
+        socket_manager = GeoRideSocketManager(hass, api, tracker_ids)
+        _LOGGER.info("GeoRide Socket.IO manager created (will start after platforms)")
+
+    # Store all data (socket_manager déjà disponible pour les entités)
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
@@ -128,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinators": coordinators,
         "lifetime_coordinators": lifetime_coordinators,
         "tracker_status_coordinators": tracker_status_coordinators,
-        "socket_manager": None,  # initialisé ci-dessous si activé
+        "socket_manager": socket_manager,  # déjà prêt pour async_added_to_hass
     }
 
     # Register devices
@@ -146,20 +164,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sw_version=str(tracker.get("softwareVersion", "")),
         )
 
-    # Setup platforms
+    # Setup platforms — les entités s'abonneront au socket_manager dans async_added_to_hass
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Démarrer Socket.IO APRÈS le setup des plateformes
-    # (les entités doivent être prêtes à recevoir les callbacks)
-    if socketio_enabled:
-        from .socket_manager import GeoRideSocketManager
-
-        tracker_ids = [str(t.get("trackerId")) for t in trackers]
-        socket_manager = GeoRideSocketManager(hass, api, tracker_ids)
-        hass.data[DOMAIN][entry.entry_id]["socket_manager"] = socket_manager
-
+    # Démarrer la connexion Socket.IO APRÈS le setup des plateformes
+    # (les abonnements sont en place, on peut recevoir des événements)
+    if socket_manager is not None:
         await socket_manager.start()
         _LOGGER.info("GeoRide Socket.IO manager started")
+
+        # Câbler la détection d'arrêt 5 min sur chaque coordinator récent
+        for tracker in trackers:
+            tracker_id = str(tracker.get("trackerId"))
+            coordinators[tracker_id].attach_socket_manager(socket_manager)
+        _LOGGER.info("TripsCoordinators attached to socket_manager (stop detection active)")
     else:
         _LOGGER.info("GeoRide Socket.IO disabled by option")
 
@@ -176,6 +194,73 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("Entity %s not found or doesn't support set_odometer", entity_id)
 
     hass.services.async_register(DOMAIN, SERVICE_SET_ODOMETER, handle_set_odometer, schema=SET_ODOMETER_SCHEMA)
+
+    # Register service get_trips (supports_response => résultat visible dans Developer Tools)
+    async def handle_get_trips(call: ServiceCall):
+        """Handle get_trips service call."""
+        from datetime import datetime as dt
+        from homeassistant.core import SupportsResponse  # noqa: F401 (used below)
+        tracker_id = call.data["tracker_id"]
+        from_date_str = call.data.get("from_date")
+        to_date_str = call.data.get("to_date")
+
+        from_date = None
+        to_date = None
+
+        if from_date_str:
+            try:
+                from_date = dt.fromisoformat(from_date_str)
+            except ValueError:
+                _LOGGER.error("Invalid from_date format: %s (expected ISO 8601)", from_date_str)
+                return {"error": f"Invalid from_date format: {from_date_str}"}
+
+        if to_date_str:
+            try:
+                to_date = dt.fromisoformat(to_date_str)
+            except ValueError:
+                _LOGGER.error("Invalid to_date format: %s (expected ISO 8601)", to_date_str)
+                return {"error": f"Invalid to_date format: {to_date_str}"}
+
+        # Find API instance for this entry
+        api_instance = None
+        for entry_data in hass.data.get(DOMAIN, {}).values():
+            if isinstance(entry_data, dict) and "api" in entry_data:
+                api_instance = entry_data["api"]
+                break
+
+        if not api_instance:
+            _LOGGER.error("GeoRide API not found for get_trips service")
+            return {"error": "GeoRide API not found"}
+
+        trips = await api_instance.get_trips(tracker_id, from_date, to_date)
+
+        _LOGGER.info(
+            "get_trips: tracker=%s from=%s to=%s => %d trips found",
+            tracker_id, from_date_str, to_date_str, len(trips),
+        )
+
+        result = {
+            "tracker_id": tracker_id,
+            "from_date": from_date_str,
+            "to_date": to_date_str,
+            "trip_count": len(trips),
+            "trips": trips,
+        }
+
+        # Fire event (pour automations)
+        hass.bus.async_fire(f"{DOMAIN}_trips_result", result)
+
+        # Retourner le résultat => affiché dans Developer Tools > Services
+        return result
+
+    from homeassistant.core import SupportsResponse
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_TRIPS,
+        handle_get_trips,
+        schema=GET_TRIPS_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
     # Reload on options change
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -200,8 +285,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await socket_manager.stop()
         _LOGGER.info("GeoRide Socket.IO manager stopped")
 
+    # Annuler les refreshs minuit des coordinators lifetime
+    lifetime_coordinators = entry_data.get("lifetime_coordinators", {})
+    for lifetime_coordinator in lifetime_coordinators.values():
+        lifetime_coordinator.unschedule_midnight_refresh()
+
+    # Désabonner les coordinators récents du socket_manager (stop detection)
+    coordinators = entry_data.get("coordinators", {})
+    for coordinator in coordinators.values():
+        coordinator.detach_socket_manager()
+
     if len(hass.data.get(DOMAIN, {})) <= 1:
         hass.services.async_remove(DOMAIN, SERVICE_SET_ODOMETER)
+        hass.services.async_remove(DOMAIN, SERVICE_GET_TRIPS)
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
