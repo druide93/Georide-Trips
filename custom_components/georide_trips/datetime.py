@@ -2,10 +2,13 @@
 
 Entités datetime rattachées au device de chaque moto :
 
-── Entretien - Chaîne ────────────────────────────────────────────
+── Entretien Chaîne ──────────────────────────────────────────────
 - date_dernier_entretien_chaine   : date du dernier entretien chaîne
 
-── Entretien - Révision ──────────────────────────────────────────
+── Entretien Vidange ─────────────────────────────────────────────
+- date_dernier_entretien_vidange  : date de la dernière vidange
+
+── Entretien Révision ────────────────────────────────────────────
 - date_dernier_entretien_revision : date de la dernière révision
 """
 import logging
@@ -26,19 +29,19 @@ _LOGGER = logging.getLogger(__name__)
 DATETIME_DESCRIPTIONS = [
     {
         "key": "date_dernier_entretien_chaine",
-        "name": "Entretien chaîne - Date dernier entretien",
-        "icon": "mdi:calendar-check",
-        "entity_category": EntityCategory.CONFIG,
-    },
-    {
-        "key": "date_dernier_entretien_revision",
-        "name": "Révision - Date dernière révision",
+        "name": "Entretien Chaîne - Date dernier entretien",
         "icon": "mdi:calendar-check",
         "entity_category": EntityCategory.CONFIG,
     },
     {
         "key": "date_dernier_entretien_vidange",
-        "name": "Vidange - Date dernière vidange",
+        "name": "Entretien Vidange - Date dernière vidange",
+        "icon": "mdi:calendar-check",
+        "entity_category": EntityCategory.CONFIG,
+    },
+    {
+        "key": "date_dernier_entretien_revision",
+        "name": "Entretien Révision - Date dernière révision",
         "icon": "mdi:calendar-check",
         "entity_category": EntityCategory.CONFIG,
     },
@@ -96,7 +99,7 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} - Trajet",
+            name=f"{self._tracker_name} Trips",
             manufacturer="GeoRide",
             model=self._tracker.get("model", "GeoRide Tracker"),
             sw_version=str(self._tracker.get("softwareVersion", "")),
@@ -128,7 +131,6 @@ class GeoRideDateTimeEntity(DateTimeEntity, RestoreEntity):
 
     async def async_set_value(self, value: datetime) -> None:
         """Met à jour la date depuis l'interface ou une automation."""
-        # S'assurer que la valeur est timezone-aware
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         self._attr_native_value = value
