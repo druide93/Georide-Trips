@@ -1,12 +1,12 @@
 blueprint:
-  name: "Moto GeoRide - Suivi complet (v22)"
+  name: "Moto GeoRide - Suivi complet (v23)"
   description: |
     # 🏍️ Moto GeoRide - Suivi complet
 
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
 
-    *Version : 2026.02.24b*
+    *Version : 2026.02.24c*
 
     ---
 
@@ -18,7 +18,7 @@ blueprint:
 
     ### 🗺️ Notification nouveau trajet
 
-    À chaque arrêt de la moto (binary_sensor *En mouvement* → OFF), le blueprint attend que l'odometer se mette à jour puis envoie la notification si la distance dépasse le seuil configuré. Avec Socket.IO activé, la latence est quasi nulle. Sans Socket.IO, un trigger sur *Last Trip Details* est utilisé en fallback avec le bouton refresh.
+    À chaque arrêt (binary_sensor *En mouvement* → OFF), le blueprint appuie immédiatement sur **Refresh Trips** puis attend jusqu'à 2 min que `last_trip_sensor` se mette à jour (fallback `wait_for_trigger`). La notification part dès que les données sont fraîches. Si Socket.IO est actif, le refresh est quasi-instantané.
 
     ### 🔗 Entretien chaîne
 
@@ -104,6 +104,16 @@ blueprint:
             entity:
               integration: georide_trips
               domain: sensor
+
+        btn_refresh_trips:
+          name: "Bouton Refresh Trips"
+          description: >
+            `button.<moto>_refresh_trips` — Déclenche un rafraîchissement immédiat des trajets récents.
+            Appuyé automatiquement à chaque arrêt de la moto pour obtenir le dernier trajet sans attendre le polling horaire.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
 
         btn_refresh_odometer:
           name: "Bouton Refresh Odometer (fallback)"
@@ -693,6 +703,7 @@ variables:
   btn_enregistrer_vidange: !input btn_enregistrer_vidange
   btn_enregistrer_revision: !input btn_enregistrer_revision
   btn_refresh_odometer: !input btn_refresh_odometer
+  btn_refresh_trips: !input btn_refresh_trips
   activer_stats_hebdo: !input activer_stats_hebdo
   activer_stats_mensuelles: !input activer_stats_mensuelles
   stats_hebdo_mobile: !input stats_hebdo_mobile
@@ -1002,19 +1013,77 @@ actions:
 
     # ══════════════════════════════════════════════════════════════════════
     # 🗺️ NOUVEAU TRAJET
-    # Déclenchée par moto_arretee (binary_sensor moving → OFF, via Socket.IO)
-    # ou par nouveau_trajet (last_trip_sensor change, fallback sans Socket.IO).
+    # Déclenchée par moto_arretee (binary_sensor moving → OFF, via Socket.IO).
     #
-    # Avec Socket.IO : l'odometer est déjà à jour quand moving passe à OFF.
-    # Sans Socket.IO  : refresh via bouton + délai (fallback automatique).
+    # Stratégie :
+    #   1. Appuyer sur btn_refresh_trips pour forcer un fetch immédiat de l'API.
+    #   2. Attendre (wait_for_trigger) que last_trip_sensor change, max 2 min.
+    #      → Réactif si le refresh API répond vite (solution 2).
+    #      → Fallback automatique si le refresh tarde : on utilise les données
+    #        disponibles après le timeout (solution 1 dégradée).
+    #   3. Lire distance_trajet depuis les attributs frais de last_trip_sensor.
     # ══════════════════════════════════════════════════════════════════════
     - conditions:
         - condition: trigger
-          id:
-            - moto_arretee
-            - nouveau_trajet
+          id: moto_arretee
         - condition: template
           value_template: "{{ notif_trajet_active }}"
+      sequence:
+        # Snapshot de l'état actuel de last_trip_sensor pour détecter le changement
+        - variables:
+            last_trip_state_avant: "{{ states(last_trip_sensor) }}"
+
+        # Solution 2 : forcer un refresh immédiat des trajets
+        - action: button.press
+          target:
+            entity_id: !input btn_refresh_trips
+
+        # Fallback solution 1 : attendre que last_trip_sensor change (max 2 min)
+        - wait_for_trigger:
+            - trigger: state
+              entity_id: !input last_trip_sensor
+              not_to:
+                - "unavailable"
+                - "unknown"
+          timeout:
+            minutes: 2
+          continue_on_timeout: true
+
+        # Lire la distance du dernier trajet (données fraîches ou timeout)
+        - variables:
+            distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
+
+        # Sortie anticipée si trajet trop court
+        - condition: template
+          value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
+
+        # Lire l'odometer (à jour via Socket.IO)
+        - variables:
+            odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
+
+        # Notification
+        - action: "{{ notify_service }}"
+          data:
+            title: "🏍️ Trajet — {{ moto_nom }}"
+            message: >
+              {{ distance_trajet | round(1) }} km parcourus.
+              Autonomie restante : {{ states(sensor_autonomie_restante) | float(0) | round(1) }} km.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🗺️ NOUVEAU TRAJET (fallback sans Socket.IO)
+    # Déclenché par nouveau_trajet si moving_sensor n'a pas déclenché
+    # (Socket.IO désactivé). Évite la double notification si Socket.IO actif.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: nouveau_trajet
+        - condition: template
+          value_template: "{{ notif_trajet_active }}"
+        # N'envoie pas si la moto est encore en mouvement
+        # (le trigger moto_arretee gérera la notification)
+        - condition: state
+          entity_id: !input moving_sensor
+          state: "off"
       sequence:
         # Lire la distance du dernier trajet
         - variables:
@@ -1024,19 +1093,14 @@ actions:
         - condition: template
           value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
 
-        # Fallback : si déclenché par nouveau_trajet (pas Socket.IO),
-        # forcer refresh odometer + attendre 10s
-        - if:
-            - condition: trigger
-              id: nouveau_trajet
-          then:
-            - action: button.press
-              target:
-                entity_id: !input btn_refresh_odometer
-            - delay:
-                seconds: 10
+        # Refresh odometer pour avoir le km à jour
+        - action: button.press
+          target:
+            entity_id: !input btn_refresh_odometer
+        - delay:
+            seconds: 10
 
-        # Lire l'odometer (à jour dans tous les cas)
+        # Lire l'odometer frais
         - variables:
             odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
 
