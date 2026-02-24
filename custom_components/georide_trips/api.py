@@ -1,7 +1,7 @@
 """GeoRide API Client."""
 import logging
 import aiohttp
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,9 +75,9 @@ class GeoRideTripsAPI:
 
         # Default to last 30 days
         if from_date is None:
-            from_date = datetime.now() - timedelta(days=30)
+            from_date = datetime.now(timezone.utc) - timedelta(days=30)
         if to_date is None:
-            to_date = datetime.now()
+            to_date = datetime.now(timezone.utc)
 
         # Format dates
         from_str = from_date.strftime("%Y%m%dT%H%M%S")
@@ -123,13 +123,13 @@ class GeoRideTripsAPI:
             await self.login()
 
         # Récupérer les trips récents (24h)
-        from_date = datetime.now() - timedelta(hours=24)
-        to_date = datetime.now()
+        from_date = datetime.now(timezone.utc) - timedelta(hours=24)
+        to_date = datetime.now(timezone.utc)
         trips = await self.get_trips(tracker_id, from_date, to_date)
 
         if not trips:
             # Élargir à 7 jours si aucun trip dans les 24h
-            from_date = datetime.now() - timedelta(days=7)
+            from_date = datetime.now(timezone.utc) - timedelta(days=7)
             trips = await self.get_trips(tracker_id, from_date, to_date)
 
         if not trips:
