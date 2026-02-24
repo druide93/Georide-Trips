@@ -10,6 +10,9 @@ Entités datetime rattachées au device de chaque moto :
 
 ── Entretien Révision ────────────────────────────────────────────
 - date_dernier_entretien_revision : date de la dernière révision
+
+── Plein en attente (usage interne) ──────────────────────────────
+- plein_pending_at : horodatage du plein en attente (epoch 1970 = pas de plein en attente)
 """
 import logging
 from datetime import datetime, timezone
@@ -46,9 +49,9 @@ DATETIME_DESCRIPTIONS = [
         "entity_category": EntityCategory.CONFIG,
     },
     {
-        "key": "lifetime_last_trip_end",
-        "name": "Lifetime curseur dernier trajet",
-        "icon": "mdi:database-clock",
+        "key": "plein_pending_at",
+        "name": "Plein - Horodatage en attente",
+        "icon": "mdi:clock-outline",
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
 ]
