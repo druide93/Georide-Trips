@@ -1,213 +1,321 @@
 # 🏍️ GeoRide Trips — Intégration Home Assistant
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/druide93/Georide-Trips)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1+-green.svg)](https://www.home-assistant.io/)
 
-Intégration Home Assistant complète pour les trackers GPS **GeoRide** montés sur moto. Au-delà du simple suivi GPS, elle fournit un odomètre réel corrigé, le suivi des entretiens, le calcul d'autonomie carburant et des notifications de trajet enrichies.
+Intégration Home Assistant complète pour les trackers GPS **GeoRide**, permettant le suivi des trajets moto, le calcul d'odometer corrigé, la gestion de l'entretien (chaîne, vidange, révision), le suivi de l'autonomie carburant et les alertes de sécurité en temps réel.
 
 ---
 
 ## ✨ Fonctionnalités
 
-### 🗺️ Suivi GPS temps réel
-Connexion **Socket.IO** persistante pour des mises à jour de position quasi instantanées, avec fallback automatique sur le polling HTTP si la connexion est perdue.
-
-### 📏 Odomètre corrigé
-GeoRide ne compte que les kilomètres parcourus depuis l'installation du tracker. L'intégration applique un **offset configurable** pour afficher le kilométrage réel de la moto.
-
-### 🔗 Entretien chaîne
-Suivi des km parcourus depuis le dernier entretien avec alerte configurable et bouton de confirmation depuis l'application mobile.
-
-### 🛢️ Vidange
-Même principe que la chaîne : alerte kilométrique avec confirmation mobile.
-
-### 🔧 Révision générale
-Double critère **km ET jours** — l'alerte se déclenche dès que l'un des deux seuils est atteint.
-
-### ⛽ Autonomie carburant
-Calcul de l'autonomie restante basé sur la consommation moyenne et le plein de référence, avec alerte sous un seuil configurable.
-
-### 🚨 Alarmes temps réel
-Notifications immédiates via Socket.IO pour les alarmes **chute/crash** (critique), vibration/vol, coupure d'alimentation, zone de sortie, etc.
-
-### 📊 Statistiques périodiques
-Snapshots automatiques (jour/semaine/mois) et bilans envoyés par notification mobile ou notification persistante dans HA.
+| Domaine | Fonctionnalité |
+|---|---|
+| 🗺️ **Trajets** | Historique des 30 derniers jours, dernier trajet détaillé, notification à l'arrêt |
+| 🔢 **Odometer** | Kilométrage réel avec offset configurable (km avant l'installation du tracker) |
+| 📅 **Kilométrage périodique** | Compteurs journaliers, hebdomadaires et mensuels calculés automatiquement |
+| ⛽ **Carburant** | Autonomie restante avec moyenne glissante sur 3 pleins, alerte sous seuil |
+| 🔗 **Entretien chaîne** | Suivi km depuis le dernier entretien, alerte sous seuil configurable |
+| 🛢️ **Vidange** | Suivi km depuis la dernière vidange, alerte sous seuil configurable |
+| 🔧 **Révision** | Double critère km **et** jours, alerte dès que l'un des deux seuils est atteint |
+| 🚨 **Sécurité** | Alarme vol, chute détectée, position en temps réel via Socket.IO |
+| 🔋 **Batterie** | Niveau de batterie externe (moto) et interne (tracker) |
+| 📡 **Temps réel** | Connexion Socket.IO pour mises à jour instantanées (mouvement, alarmes) |
+| 🌿 **Mode éco** | Activation/désactivation du mode éco du tracker depuis HA |
 
 ---
 
-## 📦 Entités créées par tracker
+## 🏗️ Architecture
 
-### Sensors
-| Entité | Description |
-|--------|-------------|
-| `sensor.<moto>_last_trip` | Dernier trajet (distance, durée, vitesse) |
-| `sensor.<moto>_last_trip_details` | Détails complets du dernier trajet |
-| `sensor.<moto>_total_distance` | Distance totale sur la période |
-| `sensor.<moto>_trip_count` | Nombre de trajets |
-| `sensor.<moto>_lifetime_odometer` | Odomètre brut depuis installation |
-| `sensor.<moto>_real_odometer` | Odomètre réel (offset appliqué) |
-| `sensor.<moto>_tracker_status` | Statut du tracker (en ligne / hors ligne) |
-| `sensor.<moto>_external_battery` | Batterie externe (12V moto) |
-| `sensor.<moto>_internal_battery` | Batterie interne du tracker |
-| `sensor.<moto>_last_alarm` | Dernière alarme reçue via Socket.IO |
+L'intégration repose sur une **architecture hybride** combinant :
 
-### Binary sensors
-| Entité | Description |
-|--------|-------------|
-| `binary_sensor.<moto>_moving` | Moto en mouvement (Socket.IO) |
-| `binary_sensor.<moto>_stolen` | Alarme vol active |
-| `binary_sensor.<moto>_crashed` | Chute détectée |
-| `binary_sensor.<moto>_online` | Tracker en ligne (polling 5 min) |
-| `binary_sensor.<moto>_locked` | Tracker verrouillé |
+- **Socket.IO** (`socket.georide.com`) : mises à jour temps réel pour la position, le mouvement et les alarmes (vol, chute). La latence est quasi nulle.
+- **Polling HTTP** (`api.georide.fr`) via trois coordinators indépendants :
+  - **Trips Coordinator** : récupère les trajets des 30 derniers jours (polling toutes les heures par défaut). Déclenche un refresh immédiat à chaque arrêt de 5 minutes confirmé via Socket.IO.
+  - **Lifetime Coordinator** : cumule le kilométrage total à vie via l'API `/trips` (polling toutes les 24h). Se rafraîchit à minuit et dès qu'un nouveau trajet est détecté.
+  - **Status Coordinator** : récupère l'état du tracker (batterie, statut ligne, mode éco) via `/user/trackers` (polling toutes les 5 minutes).
 
-### Switches
-| Entité | Description |
-|--------|-------------|
-| `switch.<moto>_faire_le_plein` | Plein à faire (activé automatiquement) |
-| `switch.<moto>_entretien_chaine` | Entretien chaîne requis |
-| `switch.<moto>_entretien_vidange` | Vidange requise |
-| `switch.<moto>_entretien_revision` | Révision requise |
-| `switch.<moto>_eco_mode` | Mode éco du tracker |
+```
+GeoRide API ──────► Trips Coordinator    (1h)  ──► Trajets, odometer récent
+              ├───► Lifetime Coordinator  (24h) ──► Odometer total à vie
+              └───► Status Coordinator   (5min) ──► Batterie, statut, mode éco
 
-### Numbers (configuration & diagnostic)
-Entités de configuration pour les intervalles, seuils d'alerte, km au dernier entretien et km restants pour chaque type d'entretien (chaîne, vidange, révision), offset odomètre, autonomie carburant, etc.
-
-### Boutons
-- `button.<moto>_refresh_odometer` — Forcer la mise à jour de l'odomètre
-
-### Datetime
-Dates des derniers entretiens (chaîne, vidange, révision) et curseur de dernier trajet.
-
-### Device tracker
-- `device_tracker.<moto>` — Position GPS sur la carte HA
+socket.georide.com ──► Socket.IO ──► Position, mouvement, alarmes (temps réel)
+```
 
 ---
 
-## 🚀 Installation
+## 📦 Installation
 
 ### Via HACS (recommandé)
-1. Ouvrir HACS → Intégrations → ⋮ → Dépôts personnalisés
-2. Ajouter l'URL de ce dépôt, catégorie **Integration**
-3. Chercher **GeoRide Trips** et installer
+
+1. Dans HACS, aller dans **Intégrations** → menu ⋮ → **Dépôts personnalisés**
+2. Ajouter `https://github.com/druide93/Georide-Trips` avec la catégorie **Intégration**
+3. Rechercher **GeoRide Trips** et installer
 4. Redémarrer Home Assistant
 
-### Manuellement
-1. Copier le dossier `custom_components/georide_trips` dans votre répertoire `config/custom_components/`
+### Manuel
+
+1. Copier le dossier `georide_trips` dans `config/custom_components/`
 2. Redémarrer Home Assistant
 
----
+### Configuration
 
-## ⚙️ Configuration
-
-1. **Paramètres → Appareils et services → Ajouter une intégration**
+1. Aller dans **Paramètres → Appareils et services → Ajouter une intégration**
 2. Rechercher **GeoRide Trips**
-3. Entrer votre email et mot de passe GeoRide
-4. Un appareil est automatiquement créé pour chaque tracker détecté sur le compte
+3. Saisir l'email et le mot de passe du compte GeoRide
+4. L'intégration crée automatiquement un **appareil par tracker** détecté sur le compte
 
-### Options configurables
-| Option | Description | Défaut |
-|--------|-------------|--------|
-| Intervalle de polling trajets | Fréquence de récupération des trajets | 30 s |
-| Intervalle odomètre lifetime | Fréquence de récupération lifetime | 300 s |
-| Jours de trajets à récupérer | Fenêtre historique des trajets | 30 jours |
-| Socket.IO activé | Connexion temps réel | Activé |
-| Intervalle tracker status | Fréquence polling statut/batterie | 300 s |
+#### Options avancées (configurables après installation)
 
----
-
-## 🤖 Blueprint — Suivi complet (v17)
-
-Un blueprint d'automation est fourni pour gérer une moto de bout en bout. **Créer une instance par moto.**
-
-### Installation
-1. Importer le blueprint depuis le fichier `blueprints/automation/moto_georide_suivi.yaml`
-   ou via l'URL du dépôt dans **Paramètres → Automations → Blueprints → Importer**
-2. Créer une nouvelle automation depuis ce blueprint
-3. Configurer chaque section
-
-### Sections disponibles
-| Section | Fonctionnalité |
-|---------|----------------|
-| 🏍️ Identité | Nom et device tracker de la moto |
-| 📏 Odomètre | Entités odomètre et offset |
-| ⛽ Autonomie | Seuil d'alerte et suivi du plein |
-| 🔗 Chaîne | Intervalle et suivi entretien |
-| 🛢️ Vidange | Intervalle et suivi vidange |
-| 🔧 Révision | Seuils km + jours |
-| 📅 Kilométrage périodique | Configuration des snapshots |
-| 🔔 Notifications & Trajets | Service mobile, activation par alerte |
-| 📲 Actions mobiles | Identifiants uniques par moto |
-| 🚨 Alarmes | Sélection des types d'alarmes à notifier |
-| 📊 Bilan hebdomadaire | Heure d'envoi et canaux |
-| 📊 Bilan mensuel | Jour du mois et canaux |
-
-### Actions mobiles
-Chaque confirmation (plein, chaîne, vidange, révision) est accessible directement depuis la notification push iOS/Android. Les identifiants doivent être **uniques par moto** (ex. `PLEIN_TMAX530`, `CHAINE_AFRICA_TWIN`).
+| Option | Défaut | Description |
+|---|---|---|
+| Socket.IO activé | `true` | Active les mises à jour temps réel |
+| Polling trajets | `3600 s` | Intervalle de rafraîchissement des trajets (5 min – 24h) |
+| Polling lifetime | `86400 s` | Intervalle de rafraîchissement de l'odometer total (1h – 7j) |
+| Polling statut tracker | `300 s` | Intervalle de rafraîchissement batterie/statut (1 min – 1h) |
+| Historique trajets | `30 jours` | Fenêtre temporelle des trajets récupérés (1–365 jours) |
 
 ---
 
-## 🔌 Événements HA publiés
+## 📊 Entités créées par tracker
 
-Le Socket.IO manager publie des événements sur le bus HA utilisables dans vos propres automations :
+### Sensors (`sensor.*`)
 
-| Événement | Données | Description |
-|-----------|---------|-------------|
-| `georide_device_event` | `device_id`, `moving`, `stolen`, `crashed` | Changement d'état du device |
-| `georide_alarm_event` | `device_id`, `device_name`, `type` | Alarme reçue |
-| `georide_lock_event` | `device_id`, `device_name`, `locked` | Changement état verrou |
+#### Trajets
+| Entité | Description | Unité |
+|---|---|---|
+| `*_last_trip` | Dernier trajet (état : distance en km) | km |
+| `*_last_trip_details` | Détails du dernier trajet (attributs complets) | — |
+| `*_total_distance` | Distance totale des trajets récents (fenêtre configurée) | km |
+| `*_trip_count` | Nombre de trajets sur la période | — |
 
-### Types d'alarmes (`georide_alarm_event`)
-`alarm_vibration`, `alarm_exitZone`, `alarm_crash`, `alarm_crashParking`, `alarm_deviceOffline`, `alarm_deviceOnline`, `alarm_powerCut`, `alarm_powerUncut`, `alarm_batteryWarning`, `alarm_temperatureWarning`, `alarm_magnetOn`, `alarm_magnetOff`, `alarm_sonorAlarmOn`
+#### Kilométrage
+| Entité | Description | Unité |
+|---|---|---|
+| `*_lifetime_odometer` | Kilométrage total brut depuis l'installation du tracker | km |
+| `*_odometer` | Odometer réel = lifetime + offset (km avant installation) | km |
+| `*_km_journaliers` | Km parcourus depuis minuit | km |
+| `*_km_hebdomadaires` | Km parcourus depuis lundi minuit | km |
+| `*_km_mensuels` | Km parcourus depuis le 1er du mois | km |
+
+#### Entretien
+| Entité | Description | Unité |
+|---|---|---|
+| `*_km_restants_chaine` | Km restants avant le prochain entretien chaîne | km |
+| `*_km_restants_vidange` | Km restants avant la prochaine vidange | km |
+| `*_km_restants_revision` | Km restants avant la prochaine révision | km |
+| `*_jours_restants_revision` | Jours restants avant la prochaine révision | jours |
+
+#### Carburant
+| Entité | Description | Unité |
+|---|---|---|
+| `*_autonomie_restante` | Km restants estimés sur le plein actuel | km |
+
+#### Tracker
+| Entité | Description | Unité |
+|---|---|---|
+| `*_tracker_status` | Statut du tracker (online / offline) | — |
+| `*_external_battery` | Niveau de batterie externe (moto) | V |
+| `*_internal_battery` | Niveau de batterie interne (tracker) | % |
+| `*_last_alarm` | Dernière alarme reçue via Socket.IO | — |
+
+### Binary Sensors (`binary_sensor.*`)
+
+| Entité | Source | Description |
+|---|---|---|
+| `*_en_mouvement` | Socket.IO | `on` si la moto est en mouvement |
+| `*_alarme_vol` | Socket.IO | `on` si l'alarme antivol est active |
+| `*_chute_detectee` | Socket.IO | `on` si une chute est détectée |
+| `*_online` | Status Coordinator | `on` si le tracker est connecté |
+| `*_locked` | Status Coordinator | `on` si le tracker est verrouillé |
+
+### Switches (`switch.*`)
+
+| Entité | Description |
+|---|---|
+| `*_faire_le_plein` | Activé automatiquement quand l'autonomie passe sous le seuil |
+| `*_entretien_chaine_a_faire` | Activé quand les km restants chaîne passent sous le seuil |
+| `*_vidange_a_faire` | Activé quand les km restants vidange passent sous le seuil |
+| `*_revision_a_faire` | Activé quand les km restants révision passent sous le seuil |
+| `*_mode_eco` | Active / désactive le mode éco du tracker via l'API |
+
+> Les switches d'entretien et carburant survivent aux redémarrages (`RestoreEntity`). Les notifications ne sont envoyées qu'une fois par transition `off → on` grâce au blueprint.
+
+### Buttons (`button.*`)
+
+| Entité | Action |
+|---|---|
+| `*_refresh_trips` | Force le rafraîchissement des trajets récents |
+| `*_refresh_odometer` | Force le rafraîchissement du kilométrage lifetime |
+| `*_confirmer_le_plein` | Enregistre le plein (odometer + historique inter-plein) |
+| `*_enregistrer_entretien_chaine` | Enregistre le dernier entretien chaîne (odometer + date) |
+| `*_enregistrer_vidange` | Enregistre la dernière vidange (odometer + date) |
+| `*_enregistrer_revision` | Enregistre la dernière révision (odometer + date) |
+
+### Numbers (`number.*`)
+
+#### Configuration odometer
+| Entité | Description | Défaut |
+|---|---|---|
+| `*_odometer_offset` | Km à ajouter à l'odometer tracker (km avant installation) | 0 km |
+
+#### Configuration carburant
+| Entité | Description | Défaut |
+|---|---|---|
+| `*_autonomie_totale` | Autonomie théorique sur un plein | 150 km |
+| `*_seuil_alerte_autonomie` | Seuil d'alerte autonomie | 30 km |
+| `*_km_dernier_plein` | Odometer au dernier plein (stockage) | — |
+
+#### Configuration entretien chaîne
+| Entité | Description | Défaut |
+|---|---|---|
+| `*_intervalle_km_chaine` | Km entre deux entretiens | 500 km |
+| `*_seuil_alerte_chaine` | Km avant échéance pour alerter | 50 km |
+| `*_km_dernier_entretien_chaine` | Odometer au dernier entretien (stockage) | — |
+
+#### Configuration vidange
+| Entité | Description | Défaut |
+|---|---|---|
+| `*_intervalle_km_vidange` | Km entre deux vidanges | 6000 km |
+| `*_seuil_alerte_vidange` | Km avant échéance pour alerter | 500 km |
+| `*_km_derniere_vidange` | Odometer à la dernière vidange (stockage) | — |
+
+#### Configuration révision
+| Entité | Description | Défaut |
+|---|---|---|
+| `*_intervalle_km_revision` | Km entre deux révisions | 12000 km |
+| `*_intervalle_jours_revision` | Jours max entre révisions | 365 jours |
+| `*_seuil_alerte_revision` | Km avant échéance pour alerter | 1000 km |
+| `*_km_derniere_revision` | Odometer à la dernière révision (stockage) | — |
+
+#### Configuration kilométrage périodique
+| Entité | Description |
+|---|---|
+| `*_seuil_distance_trajet` | Distance minimale pour notifier un trajet |
+| `*_km_debut_journee` | Snapshot odometer à minuit (calculé automatiquement) |
+| `*_km_debut_semaine` | Snapshot odometer lundi minuit (calculé automatiquement) |
+| `*_km_debut_mois` | Snapshot odometer 1er du mois (calculé automatiquement) |
+
+### Datetimes (`datetime.*`)
+
+| Entité | Description |
+|---|---|
+| `*_date_dernier_entretien_chaine` | Date du dernier entretien chaîne |
+| `*_date_derniere_vidange` | Date de la dernière vidange |
+| `*_date_derniere_revision` | Date de la dernière révision |
+
+### Device Tracker (`device_tracker.*`)
+
+| Entité | Description |
+|---|---|
+| `*_position` | Position GPS en temps réel de la moto |
+
+---
+
+## 🤖 Blueprint d'automatisation
+
+L'intégration est livrée avec un **blueprint complet** (`georide-trips.yaml`) gérant l'ensemble des notifications et de la logique métier. **Créer une instance par moto.**
+
+### Fonctionnalités du blueprint (v21)
+
+**⛽ Carburant**
+- Notification push quand l'autonomie passe sous le seuil avec bouton d'action *Plein effectué*
+- Enregistrement automatique du plein : odometer précis capturé après 5 min d'arrêt
+- Calcul de l'autonomie moyenne glissante sur les 3 derniers pleins
+
+**🗺️ Nouveau trajet**
+- Notification à chaque arrêt si la distance dépasse le seuil configuré
+- Contenu : distance, durée, vitesse moyenne, vitesse max, adresse de départ/arrivée
+- Latence quasi nulle avec Socket.IO ; fallback automatique sans Socket.IO
+
+**🔗 Entretien chaîne / 🛢️ Vidange / 🔧 Révision**
+- Notification unique à la transition `off → on` du switch correspondant
+- Bouton d'action *Entretien effectué* → enregistrement odometer + date automatique
+- Aucune notification en double lors des redémarrages de HA
+
+**📅 Kilométrage périodique**
+- Snapshots automatiques à minuit, lundi minuit, et au jour configurable du mois
+- Bilans hebdomadaires et mensuels en notification push et/ou persistante
+
+**🚨 Sécurité**
+- Notification immédiate en cas d'alarme vol ou de chute détectée
+
+### Installation du blueprint
+
+1. Copier `georide-trips.yaml` dans `config/blueprints/automation/georide_trips/`
+2. Dans HA : **Paramètres → Automatisations → Blueprints**
+3. Créer une automatisation depuis le blueprint **Moto GeoRide - Suivi complet**
+4. Configurer les entités de chaque section (moto, capteurs, notifications…)
+
+---
+
+## 🔧 Calcul de l'odometer
+
+Le tracker GeoRide ne comptabilise les km qu'à partir de sa **date d'installation**, pas depuis l'origine de la moto. L'entité `*_odometer` applique un **offset** pour restituer le kilométrage réel :
+
+```
+Odometer réel = Lifetime tracker (km depuis installation) + Offset (km avant installation)
+```
+
+L'offset est configurable directement depuis l'interface HA via `number.*_odometer_offset`. Toutes les entités d'entretien et de carburant utilisent cet odometer corrigé.
 
 ---
 
 ## 📋 Prérequis
 
-- Home Assistant 2024.1+
-- Compte GeoRide avec tracker(s) associé(s)
-- Application **Home Assistant Companion** pour les notifications push (optionnel)
+- Home Assistant 2024.1 ou supérieur
+- Un compte GeoRide avec au moins un tracker actif
+- Application **Home Assistant Companion** (pour les notifications push avec boutons d'action)
+- Python 3.11+
+
+### Dépendances Python (installées automatiquement)
+
+- `aiohttp >= 3.8.0`
+- `python-socketio[asyncio_client] >= 5.0`
 
 ---
 
-## 🛠️ Service personnalisé
+## 🌐 Endpoints API utilisés
 
-```yaml
-service: georide_trips.set_odometer
-data:
-  entity_id: number.<moto>_odometer_offset
-  value: 12345.6
-```
-Permet de mettre à jour programmatiquement l'offset odomètre sans passer par l'interface.
-
----
-
-## 📝 Changelog
-
-### v3 (2026-02-23)
-- Ajout du sensor `last_alarm` alimenté par Socket.IO
-- Blueprint v17 : section Alarmes avec 4 toggles de notification et push critique pour les crashes
-- Fix : trigger `not_from: unavailable` sur les boutons pour éviter les exécutions parasites au redémarrage
-
-### v2
-- Connexion Socket.IO temps réel avec reconnexion automatique
-- Binary sensors alimentés par Socket.IO (`moving`, `stolen`, `crashed`)
-- Device tracker GPS temps réel
-
-### v1
-- Première version — polling HTTP, odomètre corrigé, entretiens, autonomie
+| Endpoint | Usage |
+|---|---|
+| `POST /user/login` | Authentification |
+| `GET /user/trackers` | Liste des trackers + statut |
+| `GET /tracker/{id}/trips` | Historique des trajets |
+| `GET /tracker/{id}/trip/{trip_id}/positions` | Positions d'un trajet |
+| `PUT /tracker/{id}/eco-mode/on` | Activer le mode éco |
+| `PUT /tracker/{id}/eco-mode/off` | Désactiver le mode éco |
+| `Socket.IO socket.georide.com` | Événements temps réel |
 
 ---
 
-## 🤝 Contribuer
+## 🛠️ Dépannage
 
-Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une issue pour signaler un bug ou proposer une fonctionnalité.
+**Le kilométrage lifetime ne se met pas à jour**
+Vérifier que le coordinator lifetime n'est pas en erreur dans les logs. Le refresh est déclenché à minuit et après chaque nouveau trajet.
+
+**L'odometer est incorrect**
+Configurer `number.*_odometer_offset` avec le kilométrage de la moto au moment de l'installation du tracker.
+
+**Les notifications d'entretien se répètent**
+Vérifier que le switch correspondant (ex. `switch.*_vidange_a_faire`) repasse bien à `off` lors de la confirmation d'entretien. Le blueprint ne notifie qu'à la transition `off → on`.
+
+**Socket.IO se déconnecte fréquemment**
+Normal en cas de réseau instable — le polling HTTP prend le relais automatiquement. Désactiver Socket.IO dans les options si la connexion est trop instable.
+
+**Les entités n'apparaissent pas après installation**
+S'assurer que le dossier s'appelle exactement `georide_trips` et redémarrer Home Assistant (pas seulement recharger).
 
 ---
 
 ## 📄 Licence
 
-MIT — voir [LICENSE](LICENSE)
+MIT License — Voir [LICENSE](LICENSE) pour les détails.
 
 ---
 
-*Testé sur Yamaha Tmax 530 et Honda Africa Twin avec trackers GeoRide.*
+## 🤝 Contribution
+
+Les issues et pull requests sont les bienvenus sur [GitHub](https://github.com/druide93/Georide-Trips).
