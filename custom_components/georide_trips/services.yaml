@@ -1,27 +1,31 @@
 get_trips:
-  name: Get Trips
-  description: Récupère les trips d'un tracker GeoRide
+  name: Récupérer les trajets
+  description: >
+    Récupère les trajets d'un tracker GeoRide entre deux dates/heures.
+    Les résultats sont disponibles dans l'événement "georide_trips_trips_result" du bus HA.
   fields:
     tracker_id:
       name: Tracker ID
-      description: ID du tracker GeoRide
+      description: ID du tracker GeoRide (ex. 2289417)
       required: true
       example: "2289417"
       selector:
         text:
     from_date:
-      name: Date de début
-      description: Date de début
+      name: Date et heure de début
+      description: Date et heure de début au format ISO 8601 (ex. 2026-02-01T00:00:00)
       required: false
+      example: "2026-02-01T00:00:00"
       selector:
         datetime:
     to_date:
-      name: Date de fin
-      description: Date de fin
+      name: Date et heure de fin
+      description: Date et heure de fin au format ISO 8601 (ex. 2026-02-23T23:59:59)
       required: false
+      example: "2026-02-23T23:59:59"
       selector:
         datetime:
-        
+
 set_odometer:
   name: Ajuster le kilométrage
   description: Définir le kilométrage réel de la moto (à faire une seule fois)
