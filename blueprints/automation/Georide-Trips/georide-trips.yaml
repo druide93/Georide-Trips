@@ -45,8 +45,8 @@ blueprint:
 
     ### 📋 Prérequis
 
-    - Intégration **georide_trips** v3+ installée et configurée
-    - Application **Home Assistant Companion** installée sur iPhone
+    - Intégration **georide_trips** installée et configurée
+    - Application **Home Assistant Companion** installée pour les notifications
 
   domain: automation
 
@@ -64,7 +64,7 @@ blueprint:
           name: "Nom de la moto"
           description: >
             Utilisé dans toutes les notifications.
-            **Exemples :** Tmax 530, Africa Twin, R1200GS
+            **Exemples :** Africa Twin, R1200GS, S1000RR
           selector:
             text:
 
@@ -88,7 +88,7 @@ blueprint:
         moving_sensor:
           name: "Capteur En mouvement (Moving)"
           description: >
-            `binary_sensor.<moto>_en_mouvement` — fourni nativement par georide_trips v3+.
+            `binary_sensor.<moto>_en_mouvement` — fourni nativement par georide_trips.
             Passe à `off` à l'arrêt de la moto (via Socket.IO temps réel).
           selector:
             entity:
@@ -262,7 +262,7 @@ blueprint:
               domain: switch
 
         n_km_restants_chaine:
-          name: "KM restants avant entretien (diagnostic)"
+          name: "KM restants avant entretien"
           description: "`number.<moto>_chaine_km_restants_avant_entretien`"
           selector:
             entity:
@@ -328,7 +328,7 @@ blueprint:
               domain: switch
 
         n_km_restants_vidange:
-          name: "KM restants avant vidange (diagnostic)"
+          name: "KM restants avant vidange"
           description: "`number.<moto>_vidange_km_restants_avant_vidange`"
           selector:
             entity:
@@ -434,7 +434,7 @@ blueprint:
           description: >
             Format : `notify.nom_du_service`
             Retrouvez vos services dans **Outils de développement → Services** (domaine `notify`).
-          default: "notify.mobile_app_iphone_de_thomas_17pro"
+          default: "notify."
           selector:
             text:
 
@@ -490,7 +490,7 @@ blueprint:
           name: "Action mobile — Confirmer le plein"
           description: >
             Identifiant unique, **différent pour chaque moto**.
-            **Exemples :** `PLEIN_TMAX530`, `PLEIN_AFRICA_TWIN`
+            **Exemple :** `PLEIN_AFRICA_TWIN`
           selector:
             text:
 
@@ -498,7 +498,7 @@ blueprint:
           name: "Action mobile — Confirmer entretien chaîne"
           description: >
             Identifiant unique par moto.
-            **Exemple :** `CHAINE_TMAX530`
+            **Exemple :** `CHAINE_AFRICA_TWIN`
           selector:
             text:
 
@@ -506,7 +506,7 @@ blueprint:
           name: "Action mobile — Confirmer vidange"
           description: >
             Identifiant unique par moto.
-            **Exemple :** `VIDANGE_TMAX530`
+            **Exemple :** `VIDANGE_AFRICA_TWIN`
           selector:
             text:
 
@@ -514,7 +514,7 @@ blueprint:
           name: "Action mobile — Confirmer révision"
           description: >
             Identifiant unique par moto.
-            **Exemple :** `REVISION_TMAX530`
+            **Exemple :** `REVISION_AFRICA_TWIN`
           selector:
             text:
 
@@ -530,7 +530,7 @@ blueprint:
         last_alarm_sensor:
           name: "Capteur dernière alarme (Last Alarm)"
           description: >
-            `sensor.<moto>_last_alarm` — fourni par georide_trips v3+.
+            `sensor.<moto>_last_alarm` — fourni par georide_trips.
             Change d'état à chaque nouvelle alarme reçue via Socket.IO.
             Expose aussi `timestamp` et `device_name` en attributs.
           selector:
