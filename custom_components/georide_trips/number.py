@@ -43,8 +43,7 @@ Entités number rattachées au device de chaque moto :
 - odometer_offset               : décalage kilométrage (km avant tracker)
 
 ── Plein en attente (usage interne) ──────────────────────────────
-- plein_pending_timestamp       : epoch Unix du moment du plein (0 = pas de plein en attente)
-- plein_pending_odometer        : odometer provisoire au moment du plein
+- plein_pending_odometer        : odometer provisoire au moment du plein (avant le trajet en cours)
 """
 import logging
 
@@ -71,17 +70,6 @@ NUMBER_DESCRIPTIONS = [
         "min": -100_000, "max": 100_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": None,
-    },
-
-    # ── Persistance du cumul lifetime (usage interne) ─────────────────────────
-    {
-        "key": "lifetime_km_cumule",
-        "name": "Lifetime KM cumulés (stockage)",
-        "icon": "mdi:database",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 1_000_000, "step": 0.01, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
     },
 
     # ── Carburant ─────────────────────────────────────────────────────────────
@@ -160,15 +148,6 @@ NUMBER_DESCRIPTIONS = [
     },
 
     # ── Plein en attente (usage interne) ─────────────────────────────────────
-    {
-        "key": "plein_pending_timestamp",
-        "name": "Plein - Timestamp en attente",
-        "icon": "mdi:clock-outline",
-        "unit": "s",
-        "min": 0, "max": 9_999_999_999, "step": 1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
     {
         "key": "plein_pending_odometer",
         "name": "Plein - Odometer provisoire",
