@@ -70,7 +70,6 @@ async def async_setup_entry(
     """Créer les binary_sensors pour chaque tracker."""
     data = hass.data[DOMAIN][entry.entry_id]
     trackers = data["trackers"]
-    socket_manager = data.get("socket_manager")
     tracker_status_coordinators = data["tracker_status_coordinators"]
 
     entities = []
@@ -81,7 +80,7 @@ async def async_setup_entry(
         # Sensors Socket.IO
         for desc in SOCKET_BINARY_SENSOR_DESCRIPTIONS:
             entities.append(
-                GeoRideBinarySensor(entry, tracker, desc, socket_manager)
+                GeoRideBinarySensor(entry, tracker, desc)
             )
 
         # Sensors polling (status coordinator)
@@ -108,12 +107,11 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
         entry: ConfigEntry,
         tracker: dict,
         desc: dict,
-        socket_manager,
     ) -> None:
         self._entry = entry
         self._tracker = tracker
         self._desc = desc
-        self._socket_manager = socket_manager
+        self._socket_manager = None
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
@@ -147,6 +145,10 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
             if last_state.state not in (None, "unknown", "unavailable"):
                 self._attr_is_on = last_state.state == "on"
 
+        # Récupérer le socket_manager depuis hass.data (disponible ici, après setup complet)
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        self._socket_manager = entry_data.get("socket_manager")
+
         if self._socket_manager:
             for event_name in self._desc["socket_events"]:
                 unregister = self._socket_manager.register_callback(
@@ -166,16 +168,19 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
         """Traiter un événement Socket.IO et mettre à jour l'état."""
         payload_key = self._desc["payload_key"]
         if payload_key not in data:
+            _LOGGER.debug(
+                "%s: payload_key '%s' absent dans l'événement: %s",
+                self._attr_name, payload_key, data,
+            )
             return
         new_state = bool(data[payload_key])
-        if new_state != self._attr_is_on:
-            self._attr_is_on = new_state
-            self.async_write_ha_state()
-            _LOGGER.debug(
-                "%s → %s (from Socket.IO event)",
-                self._attr_name,
-                "ON" if new_state else "OFF",
-            )
+        self._attr_is_on = new_state
+        self.async_write_ha_state()
+        _LOGGER.debug(
+            "%s → %s (from Socket.IO event)",
+            self._attr_name,
+            "ON" if new_state else "OFF",
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════
