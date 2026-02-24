@@ -1,12 +1,12 @@
 blueprint:
-  name: "Moto GeoRide - Suivi complet (v21)"
+  name: "Moto GeoRide - Suivi complet (v22)"
   description: |
     # 🏍️ Moto GeoRide - Suivi complet
 
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
 
-    *Version : 2026.02.25a*
+    *Version : 2026.02.24b*
 
     ---
 
@@ -714,6 +714,12 @@ triggers:
   - trigger: state
     entity_id: !input odometer_sensor
     id: odometer_change
+    not_from:
+      - "unavailable"
+      - "unknown"
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+      - "unavailable"
+      - "unknown"
 
   - trigger: state
     entity_id: !input moving_sensor
@@ -726,6 +732,12 @@ triggers:
   - trigger: state
     entity_id: !input last_trip_sensor
     id: nouveau_trajet
+    not_from:
+      - "unavailable"
+      - "unknown"
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+      - "unavailable"
+      - "unknown"
 
   - trigger: time_pattern
     minutes: "/30"
@@ -773,11 +785,17 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+      - "unavailable"
+      - "unknown"
 
   - trigger: state
     entity_id: !input btn_enregistrer_vidange
     id: confirm_vidange
     not_from:
+      - "unavailable"
+      - "unknown"
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
       - "unavailable"
       - "unknown"
 
@@ -787,6 +805,9 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+      - "unavailable"
+      - "unknown"
 
   - trigger: state
     entity_id: !input btn_refresh_odometer
@@ -794,11 +815,17 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
+    not_to:                  # ← FIX : cohérence avec les autres triggers boutons
+      - "unavailable"
+      - "unknown"
 
   - trigger: state
     entity_id: !input last_alarm_sensor
     id: nouvelle_alarme
     not_from:
+      - "unavailable"
+      - "unknown"
+    not_to:                  # ← FIX : évite alerte "unavailable" au reload
       - "unavailable"
       - "unknown"
 
@@ -818,6 +845,15 @@ actions:
             - toutes_les_30min
             - moto_arretee
       sequence:
+
+        # Garde anti-reload : on attend que les entités clés soient disponibles
+        - condition: template
+          value_template: >
+            {{ states(odometer_sensor) not in ['unavailable', 'unknown', 'none']
+               and states(switch_faire_le_plein) not in ['unavailable', 'unknown']
+               and states(switch_entretien_chaine) not in ['unavailable', 'unknown']
+               and states(switch_entretien_vidange) not in ['unavailable', 'unknown']
+               and states(switch_entretien_revision) not in ['unavailable', 'unknown'] }}
 
         - variables:
             odometer_km: "{{ states(odometer_sensor) | float(0) }}"
