@@ -1,7 +1,7 @@
 blueprint:
   name: "Moto GeoRide - Suivi complet (v26)"
   description: |
-    # 🏍️ Moto GeoRide - Suivi complet
+    # 🏍️ Moto GeoRide - Suivi
 
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
