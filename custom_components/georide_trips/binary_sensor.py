@@ -20,9 +20,10 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -90,6 +91,14 @@ async def async_setup_entry(
         # Sensors polling (status coordinator)
         entities.append(GeoRideOnlineBinarySensor(status_coordinator, entry, tracker))
         entities.append(GeoRideLockedBinarySensor(status_coordinator, entry, tracker))
+
+        # Binary sensors calculés : indicateurs d'alerte entretien/carburant
+        entities.extend([
+            GeoRidePleinRequisBinarySensor(entry, tracker, hass),
+            GeoRideChaineRequiseBinarySensor(entry, tracker, hass),
+            GeoRideVidangeRequiseBinarySensor(entry, tracker, hass),
+            GeoRideRevisionRequiseBinarySensor(entry, tracker, hass),
+        ])
 
     async_add_entities(entities)
     _LOGGER.info(
@@ -313,3 +322,186 @@ class GeoRideLockedBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def icon(self) -> str:
         return "mdi:lock-open" if self.is_on else "mdi:lock"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# BINARY SENSORS CALCULÉS — ALERTES ENTRETIEN / CARBURANT
+# ════════════════════════════════════════════════════════════════════════════
+
+class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
+    """Base pour les binary sensors d'alerte entretien/carburant.
+
+    Calcule son état en temps réel à partir des sensors/numbers de l'intégration.
+    Passe OFF→ON quand le seuil est franchi, ON→OFF quand les données redeviennent OK
+    (après confirmation d'entretien/plein). Aucune logique d'anti-doublon nécessaire :
+    le blueprint utilise un trigger from='off' to='on' pour déclencher la notification.
+    """
+
+    def __init__(self, entry: ConfigEntry, tracker: dict, hass: HomeAssistant) -> None:
+        self._entry = entry
+        self._tracker = tracker
+        self._hass = hass
+        self._attr_is_on = False
+
+        self.tracker_id = str(tracker.get("trackerId"))
+        self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
+        self._slug = self.tracker_name.lower().replace(" ", "_")
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.tracker_id)},
+            name=f"{self.tracker_name} Trips",
+            manufacturer="GeoRide",
+            model=self._tracker.get("model", "GeoRide Tracker"),
+            sw_version=str(self._tracker.get("softwareVersion", "")),
+        )
+
+    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+        state = self._hass.states.get(entity_id)
+        if state and state.state not in (None, "unknown", "unavailable"):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+        return default
+
+    def _watched_entities(self) -> list[str]:
+        """Retourner la liste des entités à surveiller pour recalcul."""
+        raise NotImplementedError
+
+    def _compute_is_on(self) -> bool:
+        """Calculer si l'alerte doit être active."""
+        raise NotImplementedError
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_state_change_event(
+                self._hass,
+                self._watched_entities(),
+                self._handle_state_change,
+            )
+        )
+        self._recalculate()
+
+    @callback
+    def _handle_state_change(self, event) -> None:
+        self._recalculate()
+        self.async_write_ha_state()
+
+    def _recalculate(self) -> None:
+        self._attr_is_on = self._compute_is_on()
+
+
+class GeoRidePleinRequisBinarySensor(_GeoRideAlerteBinarySensorBase):
+    """Binary sensor : plein requis (autonomie_restante ≤ seuil_alerte_autonomie).
+
+    `binary_sensor.<moto>_plein_requis`
+    Remplace switch.<moto>_faire_le_plein.
+    """
+
+    def __init__(self, entry, tracker, hass) -> None:
+        super().__init__(entry, tracker, hass)
+        self._entity_autonomie = f"sensor.{self._slug}_autonomie_restante"
+        self._entity_seuil = f"number.{self._slug}_carburant_seuil_alerte_autonomie"
+        self._attr_unique_id = f"{self.tracker_id}_plein_requis"
+        self._attr_name = f"{self.tracker_name} Plein requis"
+        self._attr_icon = "mdi:gas-station-alert"
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def _watched_entities(self) -> list[str]:
+        return [self._entity_autonomie, self._entity_seuil]
+
+    def _compute_is_on(self) -> bool:
+        autonomie = self._get_float(self._entity_autonomie, -1.0)
+        seuil = self._get_float(self._entity_seuil, 30.0)
+        if autonomie < 0:
+            return False
+        return autonomie <= seuil
+
+
+class GeoRideChaineRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
+    """Binary sensor : entretien chaîne requis (km_restants_chaine ≤ seuil_alerte_chaine).
+
+    `binary_sensor.<moto>_chaine_requise`
+    Remplace switch.<moto>_entretien_chaine_a_faire.
+    """
+
+    def __init__(self, entry, tracker, hass) -> None:
+        super().__init__(entry, tracker, hass)
+        self._entity_km_restants = f"sensor.{self._slug}_entretien_chaine_km_restants"
+        self._entity_seuil = f"number.{self._slug}_entretien_chaine_seuil_alerte"
+        self._attr_unique_id = f"{self.tracker_id}_chaine_requise"
+        self._attr_name = f"{self.tracker_name} Entretien Chaîne - Requis"
+        self._attr_icon = "mdi:link-variant-plus"
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def _watched_entities(self) -> list[str]:
+        return [self._entity_km_restants, self._entity_seuil]
+
+    def _compute_is_on(self) -> bool:
+        km_restants = self._get_float(self._entity_km_restants, 9999.0)
+        seuil = self._get_float(self._entity_seuil, 100.0)
+        if km_restants == 9999.0:  # entité non disponible
+            return False
+        return km_restants <= seuil
+
+
+class GeoRideVidangeRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
+    """Binary sensor : vidange requise (km_restants_vidange ≤ seuil_alerte_vidange).
+
+    `binary_sensor.<moto>_vidange_requise`
+    Remplace switch.<moto>_vidange_a_faire.
+    """
+
+    def __init__(self, entry, tracker, hass) -> None:
+        super().__init__(entry, tracker, hass)
+        self._entity_km_restants = f"sensor.{self._slug}_entretien_vidange_km_restants"
+        self._entity_seuil = f"number.{self._slug}_entretien_vidange_seuil_alerte"
+        self._attr_unique_id = f"{self.tracker_id}_vidange_requise"
+        self._attr_name = f"{self.tracker_name} Entretien Vidange - Requise"
+        self._attr_icon = "mdi:oil-level"
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def _watched_entities(self) -> list[str]:
+        return [self._entity_km_restants, self._entity_seuil]
+
+    def _compute_is_on(self) -> bool:
+        km_restants = self._get_float(self._entity_km_restants, 9999.0)
+        seuil = self._get_float(self._entity_seuil, 500.0)
+        if km_restants == 9999.0:
+            return False
+        return km_restants <= seuil
+
+
+class GeoRideRevisionRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
+    """Binary sensor : révision requise (km OU jours ≤ seuil).
+
+    `binary_sensor.<moto>_revision_requise`
+    Remplace switch.<moto>_revision_a_faire.
+    Double critère : km_restants ≤ seuil_km OU jours_restants ≤ 30.
+    """
+
+    def __init__(self, entry, tracker, hass) -> None:
+        super().__init__(entry, tracker, hass)
+        self._entity_km_restants = f"sensor.{self._slug}_entretien_revision_km_restants"
+        self._entity_jours_restants = f"sensor.{self._slug}_jours_restants_revision"
+        self._entity_seuil_km = f"number.{self._slug}_entretien_revision_seuil_alerte"
+        self._attr_unique_id = f"{self.tracker_id}_revision_requise"
+        self._attr_name = f"{self.tracker_name} Entretien Révision - Requise"
+        self._attr_icon = "mdi:wrench-clock"
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def _watched_entities(self) -> list[str]:
+        return [self._entity_km_restants, self._entity_jours_restants, self._entity_seuil_km]
+
+    def _compute_is_on(self) -> bool:
+        km_restants = self._get_float(self._entity_km_restants, 9999.0)
+        jours_restants = self._get_float(self._entity_jours_restants, 9999.0)
+        seuil_km = self._get_float(self._entity_seuil_km, 500.0)
+        if km_restants == 9999.0 and jours_restants == 9999.0:
+            return False
+        alerte_km = km_restants <= seuil_km
+        alerte_jours = jours_restants <= 30
+        return alerte_km or alerte_jours
