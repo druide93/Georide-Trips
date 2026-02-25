@@ -14,8 +14,10 @@ Entités number rattachées au device de chaque moto :
 ── Kilométrage périodique ─────────────────────────────────────────
 - km_debut_journee              : snapshot odometer à minuit (diagnostic)
 - km_debut_semaine              : snapshot odometer lundi minuit (diagnostic)
-- km_debut_mois                 : snapshot odometer 1er du mois (diagnostic)
+- km_debut_mois                 : snapshot odometer au jour configuré (diagnostic)
+- jour_stats_mensuelles         : jour du mois pour le reset mensuel (config, 1-28)
   → km_journaliers / km_hebdomadaires / km_mensuels : calculés en Python (sensor.py)
+  → Les snapshots sont mis à jour automatiquement à minuit par MidnightSnapshotManager (sensor.py)
 
 ── Entretien Chaîne ──────────────────────────────────────────────
 - intervalle_km_chaine          : km entre deux entretiens (config)
@@ -280,6 +282,17 @@ NUMBER_DESCRIPTIONS = [
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.CONFIG,
     },
+    # ── Kilométrage périodique — config ──────────────────────────────────────
+    {
+        "key": "jour_stats_mensuelles",
+        "name": "KM Stats - Jour reset mensuel",
+        "icon": "mdi:calendar-start",
+        "unit": None,
+        "min": 1, "max": 28, "step": 1, "default": 1,
+        "mode": NumberMode.BOX,
+        "entity_category": EntityCategory.CONFIG,
+    },
+
     # ── Trajets ───────────────────────────────────────────────────────────────
     {
         "key": "seuil_distance_trajet",

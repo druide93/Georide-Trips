@@ -404,7 +404,7 @@ class GeoRidePleinRequisBinarySensor(_GeoRideAlerteBinarySensorBase):
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
         self._entity_autonomie = f"sensor.{self._slug}_autonomie_restante"
-        self._entity_seuil = f"number.{self._slug}_carburant_seuil_alerte_autonomie"
+        self._entity_seuil = f"number.{self._slug}_seuil_alerte_autonomie"
         self._attr_unique_id = f"{self.tracker_id}_plein_requis"
         self._attr_name = f"{self.tracker_name} Plein requis"
         self._attr_icon = "mdi:gas-station-alert"

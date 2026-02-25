@@ -61,6 +61,11 @@ async def async_setup_entry(
         odometer_sensor = GeoRideRealOdometerSensor(lifetime_coordinator, coordinator, entry, tracker, hass)
         autonomy_sensor = GeoRideAutonomySensor(entry, tracker, hass, odometer_sensor)
 
+        # Gestionnaire des snapshots minuit — remplace le trigger 'minuit' du blueprint
+        midnight_manager = GeoRideMidnightSnapshotManager(hass, entry, tracker, odometer_sensor)
+        midnight_manager.setup()
+        entry.async_on_unload(midnight_manager.unschedule)
+
         sensors.extend([
             GeoRideLastTripSensor(coordinator, entry, tracker),
             GeoRideLastTripDetailsSensor(coordinator, entry, tracker),
@@ -379,6 +384,122 @@ class GeoRideTrackerStatusCoordinator(DataUpdateCoordinator):
             return {}
         except Exception as err:
             raise UpdateFailed(f"Error fetching tracker status: {err}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MANAGER — SNAPSHOTS MINUIT (km_debut_journee / semaine / mois)
+# ════════════════════════════════════════════════════════════════════════════
+
+class GeoRideMidnightSnapshotManager:
+    """Gestionnaire des snapshots odometer à minuit.
+
+    Remplace le trigger 'minuit' du blueprint : à 00:00:00 chaque nuit,
+    met à jour les number.km_debut_journee/semaine/mois directement en Python.
+
+    Le jour de reset mensuel est lu depuis number.<slug>_jour_stats_mensuelles
+    (configurable par l'utilisateur via l'UI, défaut = 1).
+
+    Usage :
+        manager = GeoRideMidnightSnapshotManager(hass, entry, tracker, odometer_sensor)
+        manager.setup()          # à appeler dans async_setup_entry
+        manager.unschedule()     # à appeler au unload de l'entrée
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        tracker: dict,
+        odometer_sensor: "GeoRideRealOdometerSensor",
+    ) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._tracker = tracker
+        self._odometer_sensor = odometer_sensor
+
+        self.tracker_id = str(tracker.get("trackerId"))
+        self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
+        self._slug = self.tracker_name.lower().replace(" ", "_")
+
+        self._entity_debut_journee = f"number.{self._slug}_km_debut_journee"
+        self._entity_debut_semaine = f"number.{self._slug}_km_debut_semaine"
+        self._entity_debut_mois    = f"number.{self._slug}_km_debut_mois"
+        self._entity_jour_mensuel  = f"number.{self._slug}_jour_stats_mensuelles"
+
+        self._unsub: callable | None = None
+
+    def setup(self) -> None:
+        """Programmer le callback minuit."""
+        self._unsub = async_track_time_change(
+            self._hass,
+            self._midnight_callback,
+            hour=0, minute=0, second=0,
+        )
+        _LOGGER.debug(
+            "MidnightSnapshotManager %s: programmé (snapshots minuit actifs)",
+            self.tracker_name,
+        )
+
+    def unschedule(self) -> None:
+        """Déprogrammer le callback minuit."""
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+
+    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+        state = self._hass.states.get(entity_id)
+        if state and state.state not in (None, "unknown", "unavailable"):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+        return default
+
+    def _set_number(self, entity_id: str, value: float) -> None:
+        """Mettre à jour un number via hass.services.async_call."""
+        self._hass.async_create_task(
+            self._hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": entity_id, "value": round(value, 2)},
+                blocking=False,
+            )
+        )
+
+    @callback
+    def _midnight_callback(self, now) -> None:
+        """Appelé à minuit : mettre à jour les snapshots odometer."""
+        odometer_km = self._odometer_sensor.native_value
+        if odometer_km is None:
+            _LOGGER.warning(
+                "MidnightSnapshotManager %s: odometer non disponible à minuit, snapshots ignorés",
+                self.tracker_name,
+            )
+            return
+
+        # Snapshot journalier — chaque nuit
+        self._set_number(self._entity_debut_journee, odometer_km)
+        _LOGGER.info(
+            "MidnightSnapshotManager %s: km_debut_journee = %.1f km",
+            self.tracker_name, odometer_km,
+        )
+
+        # Snapshot hebdomadaire — uniquement le lundi (weekday == 0)
+        if now.weekday() == 0:
+            self._set_number(self._entity_debut_semaine, odometer_km)
+            _LOGGER.info(
+                "MidnightSnapshotManager %s: km_debut_semaine = %.1f km (lundi)",
+                self.tracker_name, odometer_km,
+            )
+
+        # Snapshot mensuel — au jour configuré (number.*_jour_stats_mensuelles)
+        jour_mensuel = int(self._get_float(self._entity_jour_mensuel, 1.0))
+        if now.day == jour_mensuel:
+            self._set_number(self._entity_debut_mois, odometer_km)
+            _LOGGER.info(
+                "MidnightSnapshotManager %s: km_debut_mois = %.1f km (jour %d)",
+                self.tracker_name, odometer_km, jour_mensuel,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
