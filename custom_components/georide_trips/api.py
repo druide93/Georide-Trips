@@ -284,3 +284,69 @@ class GeoRideTripsAPI:
         except Exception as err:
             _LOGGER.error("Error setting eco mode: %s", err)
             return False
+
+    async def sonor_alarm_off(self, tracker_id: str) -> bool:
+        """Arrêter l'alarme sonore du tracker (GeoRide 3 uniquement).
+
+        Endpoint: POST /tracker/{tracker_id}/sonor-alarm/off
+        """
+        if not self.token:
+            await self.login()
+
+        url = f"{self.base_url}/tracker/{tracker_id}/sonor-alarm/off"
+        headers = {"Authorization": f"Bearer {self.token}"}
+
+        try:
+            async with self.session.post(url, headers=headers) as response:
+                if response.status in (200, 204):
+                    _LOGGER.info("Sonor alarm OFF for tracker %s", tracker_id)
+                    return True
+                elif response.status == 401:
+                    await self.login()
+                    return await self.sonor_alarm_off(tracker_id)
+                else:
+                    text = await response.text()
+                    _LOGGER.error("Failed sonor alarm off: status=%s body=%s", response.status, text)
+                    return False
+        except Exception as err:
+            _LOGGER.error("Error sonor alarm off: %s", err)
+            return False
+
+    async def toggle_lock(self, tracker_id: str) -> bool | None:
+        """Toggle the lock state of a tracker.
+
+        Endpoint: POST /tracker/{tracker_id}/toggleLock
+        Returns the new locked state (True/False), or None on error.
+        """
+        if not self.token:
+            await self.login()
+
+        url = f"{self.base_url}/tracker/{tracker_id}/toggleLock"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+        }
+
+        try:
+            async with self.session.post(url, headers=headers) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    locked = result.get("locked")
+                    _LOGGER.info(
+                        "Tracker %s lock toggled -> locked=%s",
+                        tracker_id, locked,
+                    )
+                    return locked
+                elif response.status == 401:
+                    _LOGGER.warning("Token expired, re-authenticating...")
+                    await self.login()
+                    return await self.toggle_lock(tracker_id)
+                else:
+                    text = await response.text()
+                    _LOGGER.error(
+                        "Failed to toggle lock: status=%s body=%s",
+                        response.status, text,
+                    )
+                    return None
+        except Exception as err:
+            _LOGGER.error("Error toggling lock: %s", err)
+            return None

@@ -31,6 +31,7 @@ async def async_setup_entry(
         tracker_id = str(tracker.get("trackerId"))
 
         buttons.extend([
+            GeoRideSirenOffButton(entry, tracker, api),
             GeoRideRefreshTripsButton(
                 entry, tracker,
                 coordinators[tracker_id]
@@ -627,3 +628,37 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
                 self.tracker_name, err,
             )
             return 0.0
+
+
+class GeoRideSirenOffButton(ButtonEntity):
+    """Bouton pour arrêter l'alarme sonore du tracker GeoRide 3.
+
+    Appelle POST /tracker/{id}/sonor-alarm/off.
+    Utile pour couper la sirène avant la fin du délai configuré.
+    """
+
+    def __init__(self, entry: ConfigEntry, tracker: dict, api) -> None:
+        self._entry = entry
+        self._tracker = tracker
+        self._api = api
+        self._tracker_id = str(tracker.get("trackerId"))
+        self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
+        self._attr_unique_id = f"{self._tracker_id}_siren_off"
+        self._attr_name = f"{self._tracker_name} Arrêter sirène"
+        self._attr_icon = "mdi:alarm-light-off"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._tracker_id)},
+            name=f"{self._tracker_name} Trips",
+            manufacturer="GeoRide",
+            model=self._tracker.get("model", "GeoRide Tracker"),
+            sw_version=str(self._tracker.get("softwareVersion", "")),
+        )
+
+    async def async_press(self) -> None:
+        """Arrêter l'alarme sonore."""
+        success = await self._api.sonor_alarm_off(self._tracker_id)
+        if not success:
+            _LOGGER.error("Échec de l'arrêt de la sirène pour le tracker %s", self._tracker_id)
