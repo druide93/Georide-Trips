@@ -128,6 +128,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         lifetime_coordinators[tracker_id] = lifetime_coordinator
         tracker_status_coordinators[tracker_id] = status_coordinator
 
+    # Câbler la détection de verrouillage sur chaque coordinator récent
+    # (via StatusCoordinator polling 5 min — indépendant du Socket.IO)
+    for tracker in trackers:
+        tracker_id = str(tracker.get("trackerId"))
+        coordinators[tracker_id].attach_status_coordinator(
+            tracker_status_coordinators[tracker_id]
+        )
+    _LOGGER.info("TripsCoordinators attached to StatusCoordinator (lock detection active)")
+
     # Créer le socket_manager AVANT le setup des plateformes
     # pour que les entités puissent s'y abonner dans async_added_to_hass
     socket_manager = None
@@ -173,11 +182,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await socket_manager.start()
         _LOGGER.info("GeoRide Socket.IO manager started")
 
-        # Câbler la détection d'arrêt 5 min sur chaque coordinator récent
-        for tracker in trackers:
-            tracker_id = str(tracker.get("trackerId"))
-            coordinators[tracker_id].attach_socket_manager(socket_manager)
-        _LOGGER.info("TripsCoordinators attached to socket_manager (stop detection active)")
+        # Le câblage lock detection est fait via StatusCoordinator (indépendant du Socket.IO)
+        _LOGGER.info("GeoRide Socket.IO manager started")
     else:
         _LOGGER.info("GeoRide Socket.IO disabled by option")
 
@@ -290,10 +296,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for lifetime_coordinator in lifetime_coordinators.values():
         lifetime_coordinator.unschedule_midnight_refresh()
 
-    # Désabonner les coordinators récents du socket_manager (stop detection)
+    # Désabonner les coordinators récents du StatusCoordinator (lock detection)
     coordinators = entry_data.get("coordinators", {})
     for coordinator in coordinators.values():
-        coordinator.detach_socket_manager()
+        coordinator.detach_status_coordinator()
 
     if len(hass.data.get(DOMAIN, {})) <= 1:
         hass.services.async_remove(DOMAIN, SERVICE_SET_ODOMETER)

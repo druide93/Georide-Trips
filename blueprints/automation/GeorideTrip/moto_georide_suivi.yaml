@@ -53,6 +53,7 @@ blueprint:
   domain: automation
 
   input:
+
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 1 — IDENTITÉ
     # ════════════════════════════════════════════════════════════════════════
@@ -204,7 +205,10 @@ blueprint:
       input:
         n_intervalle_km_chaine:
           name: "Intervalle km entre entretiens"
-          description: "`number.<moto>_entretien_chaine_intervalle_km`"
+          description: >
+            `number.<moto>_entretien_chaine_intervalle_km`
+            Utilisé uniquement pour afficher `{{ km_restants_chaine }}` dans le message de notification.
+            Le déclenchement de l'alerte est géré automatiquement par `binary_sensor.<moto>_chaine_requise`.
           selector:
             entity:
               integration: georide_trips
@@ -212,7 +216,10 @@ blueprint:
 
         n_seuil_alerte_chaine:
           name: "Seuil d'alerte (km restants)"
-          description: "`number.<moto>_entretien_chaine_seuil_alerte`"
+          description: >
+            `number.<moto>_entretien_chaine_seuil_alerte`
+            Utilisé uniquement pour afficher `{{ km_restants_chaine }}` dans le message de notification.
+            Le seuil de déclenchement réel est lu directement par le binary sensor Python.
           selector:
             entity:
               integration: georide_trips
@@ -265,7 +272,10 @@ blueprint:
       input:
         n_intervalle_km_vidange:
           name: "Intervalle km entre vidanges"
-          description: "`number.<moto>_vidange_intervalle_km`"
+          description: >
+            `number.<moto>_vidange_intervalle_km`
+            Utilisé uniquement pour afficher `{{ km_restants_vidange }}` dans le message de notification.
+            Le déclenchement de l'alerte est géré automatiquement par `binary_sensor.<moto>_vidange_requise`.
           selector:
             entity:
               integration: georide_trips
@@ -273,7 +283,10 @@ blueprint:
 
         n_seuil_alerte_vidange:
           name: "Seuil d'alerte (km restants)"
-          description: "`number.<moto>_vidange_seuil_alerte`"
+          description: >
+            `number.<moto>_vidange_seuil_alerte`
+            Utilisé uniquement pour afficher `{{ km_restants_vidange }}` dans le message de notification.
+            Le seuil de déclenchement réel est lu directement par le binary sensor Python.
           selector:
             entity:
               integration: georide_trips
@@ -326,7 +339,10 @@ blueprint:
       input:
         n_intervalle_km_revision:
           name: "Intervalle km entre révisions"
-          description: "`number.<moto>_revision_intervalle_km`"
+          description: >
+            `number.<moto>_revision_intervalle_km`
+            Utilisé uniquement pour afficher `{{ km_restants_revision }}` dans le message de notification.
+            Le déclenchement de l'alerte est géré automatiquement par `binary_sensor.<moto>_revision_requise`.
           selector:
             entity:
               integration: georide_trips
@@ -344,7 +360,10 @@ blueprint:
 
         n_seuil_alerte_revision:
           name: "Seuil d'alerte (km restants)"
-          description: "`number.<moto>_revision_seuil_alerte`"
+          description: >
+            `number.<moto>_revision_seuil_alerte`
+            Utilisé uniquement pour afficher `{{ km_restants_revision }}` dans le message de notification.
+            Le seuil de déclenchement réel est lu directement par le binary sensor Python.
           selector:
             entity:
               integration: georide_trips
@@ -492,6 +511,7 @@ blueprint:
       name: "✏️ Personnalisation des notifications"
       collapsed: true
       input:
+
         # ── TRAJET ──────────────────────────────────────────────────────────
         notif_trajet_titre:
           name: "Trajet — Titre"
@@ -624,6 +644,7 @@ blueprint:
           default: false
           selector:
             boolean:
+
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 9b — ALARMES
@@ -804,13 +825,14 @@ variables:
 # TRIGGERS
 # ════════════════════════════════════════════════════════════════════════════
 triggers:
+
   - trigger: state
     entity_id: !input odometer_sensor
     id: odometer_change
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
       - "unavailable"
       - "unknown"
 
@@ -828,7 +850,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
       - "unavailable"
       - "unknown"
 
@@ -870,7 +892,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
       - "unavailable"
       - "unknown"
 
@@ -880,7 +902,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
       - "unavailable"
       - "unknown"
 
@@ -890,7 +912,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
       - "unavailable"
       - "unknown"
 
@@ -900,7 +922,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : cohérence avec les autres triggers boutons
+    not_to:                  # ← FIX : cohérence avec les autres triggers boutons
       - "unavailable"
       - "unknown"
 
@@ -910,7 +932,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to: # ← FIX : évite alerte "unavailable" au reload
+    not_to:                  # ← FIX : évite alerte "unavailable" au reload
       - "unavailable"
       - "unknown"
 
@@ -946,498 +968,500 @@ triggers:
 # ════════════════════════════════════════════════════════════════════════════
 actions:
   - choose:
-      # ══════════════════════════════════════════════════════════════════════
-      # ⛽ ALERTE PLEIN — binary_sensor off→on
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: alerte_plein
-          - condition: template
-            value_template: "{{ notif_autonomie_active }}"
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-              km_restants: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
-          - action: "{{ notify_service }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ⛽ ALERTE PLEIN — binary_sensor off→on
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: alerte_plein
+        - condition: template
+          value_template: "{{ notif_autonomie_active }}"
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+            km_restants: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_autonomie_titre
+            message: !input notif_autonomie_message
             data:
-              title: !input notif_autonomie_titre
-              message: !input notif_autonomie_message
+              actions:
+                - action: "{{ action_plein }}"
+                  title: "✅ Plein effectué"
+        - if:
+            - condition: template
+              value_template: !input notif_autonomie_persistante
+          then:
+            - action: persistent_notification.create
               data:
-                actions:
-                  - action: "{{ action_plein }}"
-                    title: "✅ Plein effectué"
-          - if:
-              - condition: template
-                value_template: !input notif_autonomie_persistante
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: !input notif_autonomie_titre
-                  message: !input notif_autonomie_message
-                  notification_id: "autonomie_{{ moto_nom | slugify }}"
+                title: !input notif_autonomie_titre
+                message: !input notif_autonomie_message
+                notification_id: "autonomie_{{ moto_nom | slugify }}"
 
-      # ══════════════════════════════════════════════════════════════════════
-      # 🔗 ALERTE CHAÎNE — binary_sensor off→on
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: alerte_chaine
-          - condition: template
-            value_template: "{{ notif_chaine_active }}"
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-              km_depuis_chaine: "{{ [odometer_km - states(n_km_dernier_entretien_chaine) | float(0), 0] | max | round(0) }}"
-              km_restants_chaine: "{{ [states(n_intervalle_km_chaine) | float(500) - km_depuis_chaine, 0] | max | round(0) }}"
-          - action: "{{ notify_service }}"
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔗 ALERTE CHAÎNE — binary_sensor off→on
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: alerte_chaine
+        - condition: template
+          value_template: "{{ notif_chaine_active }}"
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+            km_depuis_chaine: "{{ [odometer_km - states(n_km_dernier_entretien_chaine) | float(0), 0] | max | round(0) }}"
+            km_restants_chaine: "{{ [states(n_intervalle_km_chaine) | float(500) - km_depuis_chaine, 0] | max | round(0) }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_chaine_titre
+            message: !input notif_chaine_message
             data:
-              title: !input notif_chaine_titre
-              message: !input notif_chaine_message
+              actions:
+                - action: "{{ action_chaine }}"
+                  title: "✅ Chaîne entretenue"
+        - if:
+            - condition: template
+              value_template: !input notif_chaine_persistante
+          then:
+            - action: persistent_notification.create
               data:
-                actions:
-                  - action: "{{ action_chaine }}"
-                    title: "✅ Chaîne entretenue"
-          - if:
-              - condition: template
-                value_template: !input notif_chaine_persistante
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: !input notif_chaine_titre
-                  message: !input notif_chaine_message
-                  notification_id: "chaine_{{ moto_nom | slugify }}"
+                title: !input notif_chaine_titre
+                message: !input notif_chaine_message
+                notification_id: "chaine_{{ moto_nom | slugify }}"
 
-      # ══════════════════════════════════════════════════════════════════════
-      # 🛢️ ALERTE VIDANGE — binary_sensor off→on
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: alerte_vidange
-          - condition: template
-            value_template: "{{ notif_vidange_active }}"
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-              km_depuis_vidange: "{{ [odometer_km - states(n_km_dernier_entretien_vidange) | float(0), 0] | max | round(0) }}"
-              km_restants_vidange: "{{ [states(n_intervalle_km_vidange) | float(6000) - km_depuis_vidange, 0] | max | round(0) }}"
-          - action: "{{ notify_service }}"
+    # ══════════════════════════════════════════════════════════════════════
+    # 🛢️ ALERTE VIDANGE — binary_sensor off→on
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: alerte_vidange
+        - condition: template
+          value_template: "{{ notif_vidange_active }}"
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+            km_depuis_vidange: "{{ [odometer_km - states(n_km_dernier_entretien_vidange) | float(0), 0] | max | round(0) }}"
+            km_restants_vidange: "{{ [states(n_intervalle_km_vidange) | float(6000) - km_depuis_vidange, 0] | max | round(0) }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_vidange_titre
+            message: !input notif_vidange_message
             data:
-              title: !input notif_vidange_titre
-              message: !input notif_vidange_message
+              actions:
+                - action: "{{ action_vidange }}"
+                  title: "✅ Vidange effectuée"
+        - if:
+            - condition: template
+              value_template: !input notif_vidange_persistante
+          then:
+            - action: persistent_notification.create
               data:
-                actions:
-                  - action: "{{ action_vidange }}"
-                    title: "✅ Vidange effectuée"
-          - if:
-              - condition: template
-                value_template: !input notif_vidange_persistante
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: !input notif_vidange_titre
-                  message: !input notif_vidange_message
-                  notification_id: "vidange_{{ moto_nom | slugify }}"
+                title: !input notif_vidange_titre
+                message: !input notif_vidange_message
+                notification_id: "vidange_{{ moto_nom | slugify }}"
 
-      # ══════════════════════════════════════════════════════════════════════
-      # 🔧 ALERTE RÉVISION — binary_sensor off→on
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: alerte_revision
-          - condition: template
-            value_template: "{{ notif_revision_active }}"
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-              km_depuis_revision: "{{ [odometer_km - states(n_km_dernier_entretien_revision) | float(0), 0] | max | round(0) }}"
-              km_restants_revision: "{{ [states(n_intervalle_km_revision) | float(6000) - km_depuis_revision, 0] | max | round(0) }}"
-              jours_depuis_revision: "{{ ((now() - (states(dt_date_dernier_entretien_revision) | as_datetime | as_local)).days) | int(0) }}"
-              jours_restants_revision: "{{ [states(n_intervalle_jours_revision) | int(365) - jours_depuis_revision, 0] | max }}"
-              alerte_revision_km: "{{ km_restants_revision <= states(n_seuil_alerte_revision) | float(500) }}"
-              alerte_revision_jours: "{{ jours_restants_revision <= 30 }}"
-          - action: "{{ notify_service }}"
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔧 ALERTE RÉVISION — binary_sensor off→on
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: alerte_revision
+        - condition: template
+          value_template: "{{ notif_revision_active }}"
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+            km_depuis_revision: "{{ [odometer_km - states(n_km_dernier_entretien_revision) | float(0), 0] | max | round(0) }}"
+            km_restants_revision: "{{ [states(n_intervalle_km_revision) | float(6000) - km_depuis_revision, 0] | max | round(0) }}"
+            jours_depuis_revision: "{{ ((now() - (states(dt_date_dernier_entretien_revision) | as_datetime | as_local)).days) | int(0) }}"
+            jours_restants_revision: "{{ [states(n_intervalle_jours_revision) | int(365) - jours_depuis_revision, 0] | max }}"
+            alerte_revision_km: "{{ km_restants_revision <= states(n_seuil_alerte_revision) | float(500) }}"
+            alerte_revision_jours: "{{ jours_restants_revision <= 30 }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_revision_titre
+            message: !input notif_revision_message
             data:
-              title: !input notif_revision_titre
-              message: !input notif_revision_message
+              actions:
+                - action: "{{ action_revision }}"
+                  title: "✅ Révision effectuée"
+        - if:
+            - condition: template
+              value_template: !input notif_revision_persistante
+          then:
+            - action: persistent_notification.create
               data:
-                actions:
-                  - action: "{{ action_revision }}"
-                    title: "✅ Révision effectuée"
-          - if:
-              - condition: template
-                value_template: !input notif_revision_persistante
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: !input notif_revision_titre
-                  message: !input notif_revision_message
-                  notification_id: "revision_{{ moto_nom | slugify }}"
+                title: !input notif_revision_titre
+                message: !input notif_revision_message
+                notification_id: "revision_{{ moto_nom | slugify }}"
 
-      # ══════════════════════════════════════════════════════════════════════
-      # 🗺️ NOUVEAU TRAJET
-      # Déclenchée par moto_verrouillee (locked_sensor → OFF = verrouillé).
-      # Signal fiable d'arrêt définitif, insensible aux feux rouges.
-      #
-      # Stratégie :
-      #   1. Appuyer sur btn_refresh_trips pour forcer un fetch immédiat de l'API.
-      #   2. Attendre (wait_for_trigger) que last_trip_sensor change, max 3 min.
-      #      → Les données ont le temps d'arriver car le verrouillage est polling 5 min.
-      #   3. Lire distance_trajet depuis les attributs frais de last_trip_sensor.
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: moto_verrouillee
-          - condition: template
-            value_template: "{{ notif_trajet_active }}"
-        sequence:
-          # Forcer un refresh immédiat des trajets
-          - action: button.press
-            target:
-              entity_id: !input btn_refresh_trips
+    # ══════════════════════════════════════════════════════════════════════
+    # 🗺️ NOUVEAU TRAJET
+    # Déclenchée par moto_verrouillee (locked_sensor → OFF = verrouillé).
+    # Signal fiable d'arrêt définitif, insensible aux feux rouges.
+    #
+    # Stratégie :
+    #   1. Appuyer sur btn_refresh_trips pour forcer un fetch immédiat de l'API.
+    #   2. Attendre (wait_for_trigger) que last_trip_sensor change, max 3 min.
+    #      → Les données ont le temps d'arriver car le verrouillage est polling 5 min.
+    #   3. Lire distance_trajet depuis les attributs frais de last_trip_sensor.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: moto_verrouillee
+        - condition: template
+          value_template: "{{ notif_trajet_active }}"
+      sequence:
+        # Forcer un refresh immédiat des trajets
+        - action: button.press
+          target:
+            entity_id: !input btn_refresh_trips
 
-          # Attendre que last_trip_sensor change (max 3 min)
-          - wait_for_trigger:
-              - trigger: state
-                entity_id: !input last_trip_sensor
-                not_to:
-                  - "unavailable"
-                  - "unknown"
-            timeout:
-              minutes: 3
-            continue_on_timeout: true
+        # Attendre que last_trip_sensor change (max 3 min)
+        - wait_for_trigger:
+            - trigger: state
+              entity_id: !input last_trip_sensor
+              not_to:
+                - "unavailable"
+                - "unknown"
+          timeout:
+            minutes: 3
+          continue_on_timeout: true
 
-          # Lire la distance du dernier trajet (données fraîches ou timeout)
-          - variables:
-              distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
+        # Lire la distance du dernier trajet (données fraîches ou timeout)
+        - variables:
+            distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
 
-          # Sortie anticipée si trajet trop court
-          - condition: template
-            value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
+        # Sortie anticipée si trajet trop court
+        - condition: template
+          value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
 
-          # Lire l'odometer (à jour via Socket.IO)
-          - variables:
-              odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
-              km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+        # Lire l'odometer (à jour via Socket.IO)
+        - variables:
+            odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
+            km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
 
-          # Notification
-          - action: "{{ notify_service }}"
-            data:
-              title: !input notif_trajet_titre
-              message: !input notif_trajet_message
-          - if:
-              - condition: template
-                value_template: !input notif_trajet_persistante
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: !input notif_trajet_titre
-                  message: !input notif_trajet_message
-                  notification_id: "trajet_{{ moto_nom | slugify }}"
+        # Notification
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_trajet_titre
+            message: !input notif_trajet_message
+        - if:
+            - condition: template
+              value_template: !input notif_trajet_persistante
+          then:
+            - action: persistent_notification.create
+              data:
+                title: !input notif_trajet_titre
+                message: !input notif_trajet_message
+                notification_id: "trajet_{{ moto_nom | slugify }}"
 
-      # ══════════════════════════════════════════════════════════════════════
-      # 🗺️ NOUVEAU TRAJET (fallback)
-      # Déclenché par nouveau_trajet (changement de last_trip_sensor).
-      # Couvre le cas où le verrouillage n'a pas encore déclenché moto_verrouillee.
-      #
-      # Anti-doublon simple : si locked_sensor est passé à "off" (verrouillé)
-      # depuis moins de 3 min, c'est que moto_verrouillee a déjà traité
-      # ce trajet → on ignore.
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: nouveau_trajet
-          - condition: template
-            value_template: "{{ notif_trajet_active }}"
-          # Anti-doublon : si locked_sensor vient de passer à off (< 3 min),
-          # moto_verrouillee a déjà géré la notification → on sort
-          - condition: template
-            value_template: >
-              {% set last_changed = states[locked_sensor].last_changed %}
-              {% if last_changed %}
-                {{ (now() - last_changed).total_seconds() > 180 or not is_state(locked_sensor, 'off') }}
-              {% else %}
-                true
+    # ══════════════════════════════════════════════════════════════════════
+    # 🗺️ NOUVEAU TRAJET (fallback)
+    # Déclenché par nouveau_trajet (changement de last_trip_sensor).
+    # Couvre le cas où le verrouillage n'a pas encore déclenché moto_verrouillee.
+    #
+    # Anti-doublon simple : si locked_sensor est passé à "off" (verrouillé)
+    # depuis moins de 3 min, c'est que moto_verrouillee a déjà traité
+    # ce trajet → on ignore.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: nouveau_trajet
+        - condition: template
+          value_template: "{{ notif_trajet_active }}"
+        # Anti-doublon : si locked_sensor vient de passer à off (< 3 min),
+        # moto_verrouillee a déjà géré la notification → on sort
+        - condition: template
+          value_template: >
+            {% set last_changed = states[locked_sensor].last_changed %}
+            {% if last_changed %}
+              {{ (now() - last_changed).total_seconds() > 180 or not is_state(locked_sensor, 'off') }}
+            {% else %}
+              true
+            {% endif %}
+      sequence:
+        # Lire la distance du dernier trajet
+        - variables:
+            distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
+
+        # Sortie anticipée si trajet trop court
+        - condition: template
+          value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
+
+        # Lire l'odometer frais
+        - variables:
+            odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
+            km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+
+        # Notification
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_trajet_titre
+            message: !input notif_trajet_message
+        - if:
+            - condition: template
+              value_template: !input notif_trajet_persistante
+          then:
+            - action: persistent_notification.create
+              data:
+                title: !input notif_trajet_titre
+                message: !input notif_trajet_message
+                notification_id: "trajet_{{ moto_nom | slugify }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📊 BILAN HEBDOMADAIRE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: stats_hebdo
+        - condition: template
+          value_template: "{{ activer_stats_hebdo and now().weekday() == 0 }}"
+      sequence:
+        - variables:
+            n_km_debut_semaine: "{{ odometer_sensor | replace('sensor.', 'number.') | replace('_odometer', '_km_debut_semaine') }}"
+            km_semaine: "{{ [states(odometer_sensor) | float(0) - states(n_km_debut_semaine) | float(0), 0] | max | round(1) }}"
+            odometer_km: "{{ states(odometer_sensor) | float(0) | round(0) }}"
+            km_restants_notif: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+            message_hebdo: >
+              Bilan semaine — {{ moto_nom }} :
+              {{ km_semaine }} km cette semaine.
+              Kilométrage total : {{ odometer_km }} km.
+              Autonomie restante : {{ km_restants_notif }} km.
+        - if:
+            - condition: template
+              value_template: "{{ stats_hebdo_mobile }}"
+          then:
+            - action: "{{ notify_service }}"
+              data:
+                title: "📊 Bilan hebdo — {{ moto_nom }}"
+                message: "{{ message_hebdo }}"
+        - if:
+            - condition: template
+              value_template: "{{ stats_hebdo_persistante }}"
+          then:
+            - action: persistent_notification.create
+              data:
+                title: "📊 Bilan hebdo — {{ moto_nom }}"
+                message: "{{ message_hebdo }}"
+                notification_id: "stats_hebdo_{{ moto_nom | slugify }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📊 BILAN MENSUEL
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: stats_mensuelles
+        - condition: template
+          value_template: >
+            {% set n_jour = odometer_sensor | replace('sensor.', 'number.') | replace('_odometer', '_jour_stats_mensuelles') %}
+            {{ activer_stats_mensuelles and now().day == states(n_jour) | int(1) }}
+      sequence:
+        - variables:
+            n_km_debut_mois: "{{ odometer_sensor | replace('sensor.', 'number.') | replace('_odometer', '_km_debut_mois') }}"
+            km_mois: "{{ [states(odometer_sensor) | float(0) - states(n_km_debut_mois) | float(0), 0] | max | round(1) }}"
+            odometer_km: "{{ states(odometer_sensor) | float(0) | round(0) }}"
+            km_restants_notif: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+            message_mensuel: >
+              Bilan mensuel — {{ moto_nom }} :
+              {{ km_mois }} km ce mois.
+              Kilométrage total : {{ odometer_km }} km.
+              Autonomie restante : {{ km_restants_notif }} km.
+        - if:
+            - condition: template
+              value_template: "{{ stats_mensuelles_mobile }}"
+          then:
+            - action: "{{ notify_service }}"
+              data:
+                title: "📊 Bilan mensuel — {{ moto_nom }}"
+                message: "{{ message_mensuel }}"
+        - if:
+            - condition: template
+              value_template: "{{ stats_mensuelles_persistante }}"
+          then:
+            - action: persistent_notification.create
+              data:
+                title: "📊 Bilan mensuel — {{ moto_nom }}"
+                message: "{{ message_mensuel }}"
+                notification_id: "stats_mensuelles_{{ moto_nom | slugify }}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — PLEIN EFFECTUÉ
+    # Le bouton Python btn_confirmer_le_plein gère tout :
+    #   - attend 5 min d'arrêt puis appelle l'API pour l'odometer précis
+    #   - met à jour km_au_dernier_plein et la moyenne glissante inter-plein
+    # binary_sensor.<moto>_plein_requis repasse à off automatiquement dès que
+    # l'autonomie recalculée dépasse à nouveau le seuil.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_plein
+      sequence:
+        - action: button.press
+          target:
+            entity_id: !input btn_confirmer_le_plein
+        - action: "{{ notify_service }}"
+          data:
+            title: "⛽ Plein en cours d'enregistrement — {{ moto_nom }}"
+            message: >
+              Le plein sera enregistré après confirmation d'arrêt (sous 5 min).
+              L'autonomie sera recalculée automatiquement.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — CHAÎNE ENTRETENUE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_chaine
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_dernier_entretien_chaine
+          data:
+            value: "{{ odometer_km }}"
+        - action: datetime.set_value
+          target:
+            entity_id: !input dt_date_dernier_entretien_chaine
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Chaîne entretenue — {{ moto_nom }}"
+            message: >
+              Entretien chaîne enregistré à {{ odometer_km | round(0) }} km
+              le {{ now().strftime('%d/%m/%Y') }}.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — VIDANGE EFFECTUÉE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_vidange
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_dernier_entretien_vidange
+          data:
+            value: "{{ odometer_km }}"
+        - action: datetime.set_value
+          target:
+            entity_id: !input dt_date_dernier_entretien_vidange
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Vidange effectuée — {{ moto_nom }}"
+            message: >
+              Vidange enregistrée à {{ odometer_km | round(0) }} km
+              le {{ now().strftime('%d/%m/%Y') }}.
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ CONFIRMATION — RÉVISION EFFECTUÉE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_revision
+      sequence:
+        - variables:
+            odometer_km: "{{ states(odometer_sensor) | float(0) }}"
+        - action: number.set_value
+          target:
+            entity_id: !input n_km_dernier_entretien_revision
+          data:
+            value: "{{ odometer_km }}"
+        - action: datetime.set_value
+          target:
+            entity_id: !input dt_date_dernier_entretien_revision
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Révision effectuée — {{ moto_nom }}"
+            message: >
+              Révision enregistrée à {{ odometer_km | round(0) }} km
+              le {{ now().strftime('%d/%m/%Y') }}.
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🚨 ALARME REÇUE
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: nouvelle_alarme
+      sequence:
+        - variables:
+            alarm_type: "{{ states(last_alarm_sensor) }}"
+            alarm_timestamp: "{{ state_attr(last_alarm_sensor, 'timestamp') | default('') }}"
+            alarm_device: "{{ state_attr(last_alarm_sensor, 'device_name') | default(moto_nom) }}"
+            is_crash: "{{ alarm_type in ['alarm_crash', 'alarm_crashParking'] }}"
+            is_vibration: "{{ alarm_type == 'alarm_vibration' }}"
+            is_power: "{{ alarm_type in ['alarm_powerCut', 'alarm_powerUncut'] }}"
+            alarm_label: >
+              {% if alarm_type == 'alarm_crash' %}💥 Chute détectée
+              {% elif alarm_type == 'alarm_crashParking' %}💥 Chute (parking)
+              {% elif alarm_type == 'alarm_vibration' %}🔔 Vibration / Mouvement suspect
+              {% elif alarm_type == 'alarm_powerCut' %}🔌 Coupure alimentation
+              {% elif alarm_type == 'alarm_powerUncut' %}🔌 Alimentation rétablie
+              {% elif alarm_type == 'alarm_exitZone' %}📍 Sortie de zone
+              {% elif alarm_type == 'alarm_batteryWarning' %}🪫 Batterie faible
+              {% elif alarm_type == 'alarm_temperatureWarning' %}🌡️ Alerte température
+              {% elif alarm_type == 'alarm_deviceOffline' %}📵 Tracker hors ligne
+              {% elif alarm_type == 'alarm_deviceOnline' %}📶 Tracker en ligne
+              {% elif alarm_type == 'alarm_magnetOn' %}🧲 Aimant détecté
+              {% elif alarm_type == 'alarm_magnetOff' %}🧲 Aimant retiré
+              {% elif alarm_type == 'alarm_sonorAlarmOn' %}🔊 Alarme sonore déclenchée
+              {% else %}⚠️ Alarme : {{ alarm_type }}
               {% endif %}
-        sequence:
-          # Lire la distance du dernier trajet
-          - variables:
-              distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
-
-          # Sortie anticipée si trajet trop court
-          - condition: template
-            value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
-
-          # Lire l'odometer frais
-          - variables:
-              odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
-              km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
-
-          # Notification
-          - action: "{{ notify_service }}"
-            data:
-              title: !input notif_trajet_titre
-              message: !input notif_trajet_message
-          - if:
-              - condition: template
-                value_template: !input notif_trajet_persistante
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: !input notif_trajet_titre
-                  message: !input notif_trajet_message
-                  notification_id: "trajet_{{ moto_nom | slugify }}"
-
-      # ══════════════════════════════════════════════════════════════════════
-      # 📊 BILAN HEBDOMADAIRE
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: stats_hebdo
-          - condition: template
-            value_template: "{{ activer_stats_hebdo and now().weekday() == 0 }}"
-        sequence:
-          - variables:
-              n_km_debut_semaine: "{{ odometer_sensor | replace('sensor.', 'number.') | replace('_odometer', '_km_debut_semaine') }}"
-              km_semaine: "{{ [states(odometer_sensor) | float(0) - states(n_km_debut_semaine) | float(0), 0] | max | round(1) }}"
-              odometer_km: "{{ states(odometer_sensor) | float(0) | round(0) }}"
-              km_restants_notif: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
-              message_hebdo: >
-                Bilan semaine — {{ moto_nom }} :
-                {{ km_semaine }} km cette semaine.
-                Kilométrage total : {{ odometer_km }} km.
-                Autonomie restante : {{ km_restants_notif }} km.
-          - if:
-              - condition: template
-                value_template: "{{ stats_hebdo_mobile }}"
-            then:
-              - action: "{{ notify_service }}"
-                data:
-                  title: "📊 Bilan hebdo — {{ moto_nom }}"
-                  message: "{{ message_hebdo }}"
-          - if:
-              - condition: template
-                value_template: "{{ stats_hebdo_persistante }}"
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: "📊 Bilan hebdo — {{ moto_nom }}"
-                  message: "{{ message_hebdo }}"
-                  notification_id: "stats_hebdo_{{ moto_nom | slugify }}"
-
-      # ══════════════════════════════════════════════════════════════════════
-      # 📊 BILAN MENSUEL
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: stats_mensuelles
-          - condition: template
-            value_template: >
-              {% set n_jour = odometer_sensor | replace('sensor.', 'number.') | replace('_odometer', '_jour_stats_mensuelles') %}
-              {{ activer_stats_mensuelles and now().day == states(n_jour) | int(1) }}
-        sequence:
-          - variables:
-              n_km_debut_mois: "{{ odometer_sensor | replace('sensor.', 'number.') | replace('_odometer', '_km_debut_mois') }}"
-              km_mois: "{{ [states(odometer_sensor) | float(0) - states(n_km_debut_mois) | float(0), 0] | max | round(1) }}"
-              odometer_km: "{{ states(odometer_sensor) | float(0) | round(0) }}"
-              km_restants_notif: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
-              message_mensuel: >
-                Bilan mensuel — {{ moto_nom }} :
-                {{ km_mois }} km ce mois.
-                Kilométrage total : {{ odometer_km }} km.
-                Autonomie restante : {{ km_restants_notif }} km.
-          - if:
-              - condition: template
-                value_template: "{{ stats_mensuelles_mobile }}"
-            then:
-              - action: "{{ notify_service }}"
-                data:
-                  title: "📊 Bilan mensuel — {{ moto_nom }}"
-                  message: "{{ message_mensuel }}"
-          - if:
-              - condition: template
-                value_template: "{{ stats_mensuelles_persistante }}"
-            then:
-              - action: persistent_notification.create
-                data:
-                  title: "📊 Bilan mensuel — {{ moto_nom }}"
-                  message: "{{ message_mensuel }}"
-                  notification_id: "stats_mensuelles_{{ moto_nom | slugify }}"
-
-      # ══════════════════════════════════════════════════════════════════════
-      # ✅ CONFIRMATION — PLEIN EFFECTUÉ
-      # Le bouton Python btn_confirmer_le_plein gère tout :
-      #   - attend 5 min d'arrêt puis appelle l'API pour l'odometer précis
-      #   - met à jour km_au_dernier_plein et la moyenne glissante inter-plein
-      # binary_sensor.<moto>_plein_requis repasse à off automatiquement dès que
-      # l'autonomie recalculée dépasse à nouveau le seuil.
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: confirm_plein
-        sequence:
-          - action: button.press
-            target:
-              entity_id: !input btn_confirmer_le_plein
-          - action: "{{ notify_service }}"
-            data:
-              title: "⛽ Plein en cours d'enregistrement — {{ moto_nom }}"
-              message: >
-                Le plein sera enregistré après confirmation d'arrêt (sous 5 min).
-                L'autonomie sera recalculée automatiquement.
-
-      # ══════════════════════════════════════════════════════════════════════
-      # ✅ CONFIRMATION — CHAÎNE ENTRETENUE
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: confirm_chaine
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-          - action: number.set_value
-            target:
-              entity_id: !input n_km_dernier_entretien_chaine
-            data:
-              value: "{{ odometer_km }}"
-          - action: datetime.set_value
-            target:
-              entity_id: !input dt_date_dernier_entretien_chaine
-            data:
-              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
-          - action: "{{ notify_service }}"
-            data:
-              title: "✅ Chaîne entretenue — {{ moto_nom }}"
-              message: >
-                Entretien chaîne enregistré à {{ odometer_km | round(0) }} km
-                le {{ now().strftime('%d/%m/%Y') }}.
-
-      # ══════════════════════════════════════════════════════════════════════
-      # ✅ CONFIRMATION — VIDANGE EFFECTUÉE
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: confirm_vidange
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-          - action: number.set_value
-            target:
-              entity_id: !input n_km_dernier_entretien_vidange
-            data:
-              value: "{{ odometer_km }}"
-          - action: datetime.set_value
-            target:
-              entity_id: !input dt_date_dernier_entretien_vidange
-            data:
-              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
-          - action: "{{ notify_service }}"
-            data:
-              title: "✅ Vidange effectuée — {{ moto_nom }}"
-              message: >
-                Vidange enregistrée à {{ odometer_km | round(0) }} km
-                le {{ now().strftime('%d/%m/%Y') }}.
-
-      # ══════════════════════════════════════════════════════════════════════
-      # ✅ CONFIRMATION — RÉVISION EFFECTUÉE
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: confirm_revision
-        sequence:
-          - variables:
-              odometer_km: "{{ states(odometer_sensor) | float(0) }}"
-          - action: number.set_value
-            target:
-              entity_id: !input n_km_dernier_entretien_revision
-            data:
-              value: "{{ odometer_km }}"
-          - action: datetime.set_value
-            target:
-              entity_id: !input dt_date_dernier_entretien_revision
-            data:
-              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
-          - action: "{{ notify_service }}"
-            data:
-              title: "✅ Révision effectuée — {{ moto_nom }}"
-              message: >
-                Révision enregistrée à {{ odometer_km | round(0) }} km
-                le {{ now().strftime('%d/%m/%Y') }}.
-
-      # ══════════════════════════════════════════════════════════════════════
-      # 🚨 ALARME REÇUE
-      # ══════════════════════════════════════════════════════════════════════
-      - conditions:
-          - condition: trigger
-            id: nouvelle_alarme
-        sequence:
-          - variables:
-              alarm_type: "{{ states(last_alarm_sensor) }}"
-              alarm_timestamp: "{{ state_attr(last_alarm_sensor, 'timestamp') | default('') }}"
-              alarm_device: "{{ state_attr(last_alarm_sensor, 'device_name') | default(moto_nom) }}"
-              is_crash: "{{ alarm_type in ['alarm_crash', 'alarm_crashParking'] }}"
-              is_vibration: "{{ alarm_type == 'alarm_vibration' }}"
-              is_power: "{{ alarm_type in ['alarm_powerCut', 'alarm_powerUncut'] }}"
-              alarm_label: >
-                {% if alarm_type == 'alarm_crash' %}💥 Chute détectée
-                {% elif alarm_type == 'alarm_crashParking' %}💥 Chute (parking)
-                {% elif alarm_type == 'alarm_vibration' %}🔔 Vibration / Mouvement suspect
-                {% elif alarm_type == 'alarm_powerCut' %}🔌 Coupure alimentation
-                {% elif alarm_type == 'alarm_powerUncut' %}🔌 Alimentation rétablie
-                {% elif alarm_type == 'alarm_exitZone' %}📍 Sortie de zone
-                {% elif alarm_type == 'alarm_batteryWarning' %}🪫 Batterie faible
-                {% elif alarm_type == 'alarm_temperatureWarning' %}🌡️ Alerte température
-                {% elif alarm_type == 'alarm_deviceOffline' %}📵 Tracker hors ligne
-                {% elif alarm_type == 'alarm_deviceOnline' %}📶 Tracker en ligne
-                {% elif alarm_type == 'alarm_magnetOn' %}🧲 Aimant détecté
-                {% elif alarm_type == 'alarm_magnetOff' %}🧲 Aimant retiré
-                {% elif alarm_type == 'alarm_sonorAlarmOn' %}🔊 Alarme sonore déclenchée
-                {% else %}⚠️ Alarme : {{ alarm_type }}
-                {% endif %}
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ notif_alarme_crash and is_crash }}"
-                sequence:
-                  - action: "{{ notify_service }}"
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_crash and is_crash }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
                     data:
-                      title: "{{ alarm_label }} — {{ moto_nom }}"
-                      message: >
-                        {{ alarm_label }} sur {{ alarm_device }}.
-                        {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
-                      data:
-                        push:
-                          sound: "default"
-                          interruption-level: "critical"
-              - conditions:
-                  - condition: template
-                    value_template: "{{ notif_alarme_vol and is_vibration }}"
-                sequence:
-                  - action: "{{ notify_service }}"
-                    data:
-                      title: "{{ alarm_label }} — {{ moto_nom }}"
-                      message: >
-                        {{ alarm_label }} sur {{ alarm_device }}.
-                        {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ notif_alarme_alimentation and is_power }}"
-                sequence:
-                  - action: "{{ notify_service }}"
-                    data:
-                      title: "{{ alarm_label }} — {{ moto_nom }}"
-                      message: >
-                        {{ alarm_label }} sur {{ alarm_device }}.
-                        {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ notif_alarme_autres and not is_crash and not is_vibration and not is_power }}"
-                sequence:
-                  - action: "{{ notify_service }}"
-                    data:
-                      title: "{{ alarm_label }} — {{ moto_nom }}"
-                      message: >
-                        {{ alarm_label }} sur {{ alarm_device }}.
-                        {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+                      push:
+                        sound: "default"
+                        interruption-level: "critical"
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_vol and is_vibration }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_alimentation and is_power }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
+            - conditions:
+                - condition: template
+                  value_template: "{{ notif_alarme_autres and not is_crash and not is_vibration and not is_power }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "{{ alarm_label }} — {{ moto_nom }}"
+                    message: >
+                      {{ alarm_label }} sur {{ alarm_device }}.
+                      {% if alarm_timestamp %}Heure : {{ alarm_timestamp }}.{% endif %}
 
 mode: queued
 max: 10

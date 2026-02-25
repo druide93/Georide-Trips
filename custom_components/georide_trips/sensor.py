@@ -1,5 +1,4 @@
 """GeoRide Trips sensors - VERSION COMPLETE SIMPLE."""
-import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -106,13 +105,13 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
     """Coordinator to manage fetching GeoRide trips data (30 days).
 
     Détecte automatiquement les nouveaux trajets de deux façons :
-    1. Socket.IO : dès que la moto est arrêtée depuis plus de 5 min,
-       un refresh est déclenché (délai ~secondes après l'arrêt réel).
-    2. Polling : à chaque fetch, si le dernier trajet a changé,
-       les callbacks on_new_trip() sont appelés (filet de sécurité si Socket.IO est down).
+    1. StatusCoordinator (polling 5 min) : dès que isLocked passe à True
+       (transition déverrouillé → verrouillé), un refresh est déclenché.
+       Le verrouillage est un signal fiable de fin de trajet, insensible
+       aux micro-arrêts (feux rouges, etc.).
+    2. Polling (filet de sécurité) : à chaque fetch, si le dernier trajet
+       a changé, les callbacks on_new_trip() sont appelés.
     """
-
-    STOP_DELAY = 5 * 60  # secondes avant de considérer la moto arrêtée
 
     def __init__(self, hass, api, tracker_id, tracker_name, scan_interval=3600, trips_days_back=30):
         self.api = api
@@ -122,8 +121,9 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
         self._last_trip_id: str | None = None
         self._new_trip_callbacks: list = []
         self._stop_confirmed_callbacks: list = []
-        self._stop_timer: asyncio.TimerHandle | None = None
-        self._socket_unsub: callable | None = None
+        self._status_unsub: callable | None = None
+        self._status_coordinator = None
+        self._last_locked_state: bool | None = None
 
         super().__init__(
             hass,
@@ -147,7 +147,7 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
         return unregister
 
     def on_stop_confirmed(self, callback) -> callable:
-        """Enregistrer un callback one-shot appelé après 5 min d'arrêt confirmé.
+        """Enregistrer un callback one-shot appelé lors du verrouillage du tracker.
 
         Le callback est automatiquement retiré après le premier appel.
 
@@ -162,64 +162,65 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
                 pass
         return unregister
 
-    def attach_socket_manager(self, socket_manager) -> None:
-        """S'abonner aux événements 'device' du socket_manager pour détecter l'arrêt.
+    def attach_status_coordinator(self, status_coordinator) -> None:
+        """S'abonner au StatusCoordinator pour détecter le verrouillage du tracker.
 
-        À appeler après la création du coordinator, une fois le socket_manager disponible.
+        Déclenche un refresh dès que isLocked passe de False à True
+        (transition déverrouillé → verrouillé = fin de trajet confirmée).
+        Polling toutes les 5 min — fiable et insensible aux micro-arrêts.
+
+        À appeler après le premier refresh du StatusCoordinator.
         """
-        if socket_manager is None:
+        if status_coordinator is None:
             return
-        self._socket_unsub = socket_manager.register_callback(
-            self.tracker_id, "device", self._handle_device_event
+        self._status_coordinator = status_coordinator
+        # Initialiser l'état locked connu pour éviter un faux déclenchement au démarrage
+        data = status_coordinator.data
+        if data:
+            self._last_locked_state = bool(data.get("isLocked", False))
+        self._status_unsub = status_coordinator.async_add_listener(
+            self._handle_status_update
         )
         _LOGGER.debug(
-            "TripsCoordinator %s: abonné aux événements device Socket.IO",
-            self.tracker_name,
+            "TripsCoordinator %s: abonné au StatusCoordinator (lock detection active, état initial locked=%s)",
+            self.tracker_name, self._last_locked_state,
         )
 
-    def detach_socket_manager(self) -> None:
-        """Se désabonner du socket_manager (appelé au unload)."""
-        if self._socket_unsub:
-            self._socket_unsub()
-            self._socket_unsub = None
-        self._cancel_stop_timer()
+    def detach_status_coordinator(self) -> None:
+        """Se désabonner du StatusCoordinator (appelé au unload)."""
+        if self._status_unsub:
+            self._status_unsub()
+            self._status_unsub = None
+        self._status_coordinator = None
 
     @callback
-    def _handle_device_event(self, data: dict) -> None:
-        """Reçoit l'événement 'device' Socket.IO.
+    def _handle_status_update(self) -> None:
+        """Appelé à chaque polling du StatusCoordinator (~5 min).
 
-        Si moving == False → démarrer/réinitialiser le timer 5 min.
-        Si moving == True  → annuler le timer (micro-arrêt, pas un vrai stop).
+        Détecte la transition déverrouillé → verrouillé (isLocked False → True)
+        comme signal fiable de fin de trajet.
         """
-        moving = data.get("moving")
-        if moving is True:
-            # La moto repart — annuler tout timer en cours
-            if self._stop_timer:
-                _LOGGER.debug("%s: reprise mouvement, timer stop annulé", self.tracker_name)
-                self._cancel_stop_timer()
-        elif moving is False:
-            # La moto s'arrête — (ré)initialiser le timer
-            self._cancel_stop_timer()
-            _LOGGER.debug(
-                "%s: arrêt détecté, refresh dans %ds",
-                self.tracker_name, self.STOP_DELAY,
-            )
-            self._stop_timer = self.hass.loop.call_later(
-                self.STOP_DELAY, self._on_stop_confirmed
-            )
+        if self._status_coordinator is None:
+            return
+        data = self._status_coordinator.data
+        if not data:
+            return
 
-    def _cancel_stop_timer(self) -> None:
-        if self._stop_timer:
-            self._stop_timer.cancel()
-            self._stop_timer = None
+        is_locked = bool(data.get("isLocked", False))
 
-    def _on_stop_confirmed(self) -> None:
-        """Appelé après 5 min d'arrêt confirmé — déclencher un refresh et notifier les abonnés."""
-        self._stop_timer = None
-        _LOGGER.info(
-            "%s: arrêt confirmé (>5 min), refresh coordinator récent",
-            self.tracker_name,
-        )
+        # Transition False → True uniquement (évite le déclenchement au démarrage
+        # ou sur une valeur True stable)
+        if is_locked and self._last_locked_state is False:
+            _LOGGER.info(
+                "%s: verrouillage détecté (isLocked False→True), refresh trips",
+                self.tracker_name,
+            )
+            self._on_lock_confirmed()
+
+        self._last_locked_state = is_locked
+
+    def _on_lock_confirmed(self) -> None:
+        """Appelé lors de la détection du verrouillage — refresh + notifier les abonnés."""
         self.hass.async_create_task(self.async_request_refresh())
 
         # Notifier les callbacks one-shot (ex: bouton confirmer plein)
