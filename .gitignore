@@ -1,0 +1,5 @@
+*
+!.gitignore
+!custom_components/
+!custom_components/georide_trips/
+!custom_components/georide_trips/**
