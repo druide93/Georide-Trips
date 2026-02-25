@@ -1,12 +1,12 @@
 blueprint:
-  name: "Moto GeoRide - Suivi complet (v26)"
+  name: "Moto GeoRide - Suivi complet (v26b)"
   description: |
-    # 🏍️ Moto GeoRide - Suivi
+    # 🏍️ Moto GeoRide - Suivi complet
 
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
 
-    *Version : 2026.02.26*
+    *Version : 2026.02.26b*
 
     ---
 
@@ -841,22 +841,10 @@ variables:
   action_chaine: !input action_chaine
   action_vidange: !input action_vidange
   action_revision: !input action_revision
-  # Personnalisation notifications
-  notif_trajet_titre: !input notif_trajet_titre
-  notif_trajet_message: !input notif_trajet_message
-  notif_trajet_persistante: !input notif_trajet_persistante
-  notif_autonomie_titre: !input notif_autonomie_titre
-  notif_autonomie_message: !input notif_autonomie_message
-  notif_autonomie_persistante: !input notif_autonomie_persistante
-  notif_chaine_titre: !input notif_chaine_titre
-  notif_chaine_message: !input notif_chaine_message
-  notif_chaine_persistante: !input notif_chaine_persistante
-  notif_vidange_titre: !input notif_vidange_titre
-  notif_vidange_message: !input notif_vidange_message
-  notif_vidange_persistante: !input notif_vidange_persistante
-  notif_revision_titre: !input notif_revision_titre
-  notif_revision_message: !input notif_revision_message
-  notif_revision_persistante: !input notif_revision_persistante
+  # Note : les inputs de personnalisation des notifications (notif_*_titre, notif_*_message,
+  # notif_*_persistante) ne sont PAS stockés en variables globales car leurs valeurs par défaut
+  # contiennent des templates Jinja2 dynamiques (ex: {{ distance_trajet }}) qui ne sont pas
+  # encore définies à ce stade. Ils sont utilisés directement via !input dans les actions.
   btn_enregistrer_chaine: !input btn_enregistrer_chaine
   btn_enregistrer_vidange: !input btn_enregistrer_vidange
   btn_enregistrer_revision: !input btn_enregistrer_revision
@@ -1042,20 +1030,20 @@ actions:
                 then:
                   - action: "{{ notify_service }}"
                     data:
-                      title: "{{ notif_autonomie_titre }}"
-                      message: "{{ notif_autonomie_message }}"
+                      title: !input notif_autonomie_titre
+                      message: !input notif_autonomie_message
                       data:
                         actions:
                           - action: "{{ action_plein }}"
                             title: "✅ Plein effectué"
                   - if:
                       - condition: template
-                        value_template: "{{ notif_autonomie_persistante }}"
+                        value_template: !input notif_autonomie_persistante
                     then:
                       - action: persistent_notification.create
                         data:
-                          title: "{{ notif_autonomie_titre }}"
-                          message: "{{ notif_autonomie_message }}"
+                          title: !input notif_autonomie_titre
+                          message: !input notif_autonomie_message
                           notification_id: "autonomie_{{ moto_nom | slugify }}"
 
           - variables:
@@ -1083,20 +1071,20 @@ actions:
                 then:
                   - action: "{{ notify_service }}"
                     data:
-                      title: "{{ notif_chaine_titre }}"
-                      message: "{{ notif_chaine_message }}"
+                      title: !input notif_chaine_titre
+                      message: !input notif_chaine_message
                       data:
                         actions:
                           - action: "{{ action_chaine }}"
                             title: "✅ Chaîne entretenue"
                   - if:
                       - condition: template
-                        value_template: "{{ notif_chaine_persistante }}"
+                        value_template: !input notif_chaine_persistante
                     then:
                       - action: persistent_notification.create
                         data:
-                          title: "{{ notif_chaine_titre }}"
-                          message: "{{ notif_chaine_message }}"
+                          title: !input notif_chaine_titre
+                          message: !input notif_chaine_message
                           notification_id: "chaine_{{ moto_nom | slugify }}"
 
           - variables:
@@ -1124,20 +1112,20 @@ actions:
                 then:
                   - action: "{{ notify_service }}"
                     data:
-                      title: "{{ notif_vidange_titre }}"
-                      message: "{{ notif_vidange_message }}"
+                      title: !input notif_vidange_titre
+                      message: !input notif_vidange_message
                       data:
                         actions:
                           - action: "{{ action_vidange }}"
                             title: "✅ Vidange effectuée"
                   - if:
                       - condition: template
-                        value_template: "{{ notif_vidange_persistante }}"
+                        value_template: !input notif_vidange_persistante
                     then:
                       - action: persistent_notification.create
                         data:
-                          title: "{{ notif_vidange_titre }}"
-                          message: "{{ notif_vidange_message }}"
+                          title: !input notif_vidange_titre
+                          message: !input notif_vidange_message
                           notification_id: "vidange_{{ moto_nom | slugify }}"
 
           - variables:
@@ -1169,20 +1157,20 @@ actions:
                 then:
                   - action: "{{ notify_service }}"
                     data:
-                      title: "{{ notif_revision_titre }}"
-                      message: "{{ notif_revision_message }}"
+                      title: !input notif_revision_titre
+                      message: !input notif_revision_message
                       data:
                         actions:
                           - action: "{{ action_revision }}"
                             title: "✅ Révision effectuée"
                   - if:
                       - condition: template
-                        value_template: "{{ notif_revision_persistante }}"
+                        value_template: !input notif_revision_persistante
                     then:
                       - action: persistent_notification.create
                         data:
-                          title: "{{ notif_revision_titre }}"
-                          message: "{{ notif_revision_message }}"
+                          title: !input notif_revision_titre
+                          message: !input notif_revision_message
                           notification_id: "revision_{{ moto_nom | slugify }}"
 
       # ══════════════════════════════════════════════════════════════════════
@@ -1234,16 +1222,16 @@ actions:
           # Notification
           - action: "{{ notify_service }}"
             data:
-              title: "{{ notif_trajet_titre }}"
-              message: "{{ notif_trajet_message }}"
+              title: !input notif_trajet_titre
+              message: !input notif_trajet_message
           - if:
               - condition: template
-                value_template: "{{ notif_trajet_persistante }}"
+                value_template: !input notif_trajet_persistante
             then:
               - action: persistent_notification.create
                 data:
-                  title: "{{ notif_trajet_titre }}"
-                  message: "{{ notif_trajet_message }}"
+                  title: !input notif_trajet_titre
+                  message: !input notif_trajet_message
                   notification_id: "trajet_{{ moto_nom | slugify }}"
 
       # ══════════════════════════════════════════════════════════════════════
@@ -1287,16 +1275,16 @@ actions:
           # Notification
           - action: "{{ notify_service }}"
             data:
-              title: "{{ notif_trajet_titre }}"
-              message: "{{ notif_trajet_message }}"
+              title: !input notif_trajet_titre
+              message: !input notif_trajet_message
           - if:
               - condition: template
-                value_template: "{{ notif_trajet_persistante }}"
+                value_template: !input notif_trajet_persistante
             then:
               - action: persistent_notification.create
                 data:
-                  title: "{{ notif_trajet_titre }}"
-                  message: "{{ notif_trajet_message }}"
+                  title: !input notif_trajet_titre
+                  message: !input notif_trajet_message
                   notification_id: "trajet_{{ moto_nom | slugify }}"
 
       # ══════════════════════════════════════════════════════════════════════
