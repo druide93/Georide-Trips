@@ -290,7 +290,7 @@ class GeoRideLockedBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_unique_id = f"{self._tracker_id}_locked"
         self._attr_name = f"{self._tracker_name} Verrouillé"
         self._attr_device_class = BinarySensorDeviceClass.LOCK
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_category = None
 
     @property
     def device_info(self) -> DeviceInfo:

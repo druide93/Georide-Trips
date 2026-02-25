@@ -158,7 +158,7 @@ class GeoRideEcoModeSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_unique_id = f"{self._tracker_id}_eco_mode"
         self._attr_name = f"{self._tracker_name} Mode éco"
         self._attr_icon = "mdi:leaf"
-        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_entity_category = None
 
     @property
     def device_info(self) -> DeviceInfo:

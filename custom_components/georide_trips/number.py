@@ -69,7 +69,7 @@ NUMBER_DESCRIPTIONS = [
         "unit": UnitOfLength.KILOMETERS,
         "min": -100_000, "max": 100_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
-        "entity_category": None,
+        "entity_category": EntityCategory.CONFIG,
     },
 
     # ── Carburant ─────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ NUMBER_DESCRIPTIONS = [
         "unit": UnitOfLength.KILOMETERS,
         "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
-        "entity_category": None,
+        "entity_category": EntityCategory.CONFIG,
     },
     # ── Moyenne glissante pleins ──────────────────────────────────────────────
     {

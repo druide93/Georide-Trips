@@ -420,7 +420,7 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
         self._attr_icon = icon
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_category = None
         self._attr_native_value: float = 0.0
 
     @property
@@ -1190,7 +1190,7 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
         self._attr_icon = icon
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_category = None
         self._attr_native_value: float = 0.0
 
     @property
@@ -1351,7 +1351,7 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
         self._attr_icon = "mdi:calendar-clock"
         self._attr_native_unit_of_measurement = "d"
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_category = None
         self._attr_native_value: float = 0.0
 
     @property
@@ -1625,7 +1625,7 @@ class GeoRideLastAlarmSensor(RestoreEntity, SensorEntity):
         self._attr_name = f"{self.tracker_name} Last Alarm"
         self._attr_unique_id = f"{self.tracker_id}_last_alarm"
         self._attr_icon = "mdi:alarm-light"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_category = None
         self._state: str | None = None
         self._alarm_timestamp: str | None = None
         self._device_name: str | None = None
