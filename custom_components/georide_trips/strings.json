@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configuration de GeoRide Trips",
+        "description": "Entrez vos identifiants GeoRide",
+        "data": {
+          "email": "Email",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Email ou mot de passe incorrect",
+      "cannot_connect": "Impossible de se connecter à l'API GeoRide",
+      "unknown": "Erreur inconnue"
+    },
+    "abort": {
+      "already_configured": "Ce compte GeoRide est déjà configuré"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options GeoRide Trips",
+        "description": "Configurez la connexion temps réel et les intervalles de mise à jour.",
+        "data": {
+          "socketio_enabled": "Activer la connexion temps réel (Socket.IO)",
+          "tracker_scan_interval": "Intervalle statut tracker (secondes)",
+          "scan_interval": "Intervalle trajets récents (secondes)",
+          "lifetime_scan_interval": "Intervalle kilométrage total (secondes)",
+          "trips_days_back": "Jours d'historique",
+          "gps_min_accuracy": "Précision GPS minimale (mètres, 0 = désactivé)"
+        },
+        "data_description": {
+          "socketio_enabled": "Active la position GPS en temps réel, la détection de mouvement, et les alertes (vol, chute). Nécessite python-socketio installé.",
+          "tracker_scan_interval": "Fréquence de mise à jour du statut tracker : batterie, eco mode, verrou, état réseau. Minimum 60s, défaut 300s (5 min).",
+          "scan_interval": "Fréquence de mise à jour des trajets récents. Minimum 300s (5 min), défaut 3600s (1h).",
+          "lifetime_scan_interval": "Fréquence de mise à jour du kilométrage total. Minimum 3600s (1h), défaut 86400s (24h).",
+          "trips_days_back": "Nombre de jours à récupérer pour les trajets récents. Défaut : 30 jours.",
+          "gps_min_accuracy": "Rayon de précision GPS maximum accepté en mètres. Les positions avec un radius supérieur sont ignorées. 0 = désactivé (toutes les positions acceptées). Exemple : 50 = ignorer les positions avec précision > 50m."
+        }
+      }
+    }
+  }
+}

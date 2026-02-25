@@ -1,0 +1,67 @@
+get_trips:
+  name: Récupérer les trajets
+  description: >
+    Récupère les trajets d'un tracker GeoRide entre deux dates/heures.
+    Les résultats sont disponibles dans l'événement "georide_trips_trips_result" du bus HA.
+  fields:
+    tracker_id:
+      name: Tracker ID
+      description: ID du tracker GeoRide (ex. 2289417)
+      required: true
+      example: "2289417"
+      selector:
+        text:
+    from_date:
+      name: Date et heure de début
+      description: Date et heure de début au format ISO 8601 (ex. 2026-02-01T00:00:00)
+      required: false
+      example: "2026-02-01T00:00:00"
+      selector:
+        datetime:
+    to_date:
+      name: Date et heure de fin
+      description: Date et heure de fin au format ISO 8601 (ex. 2026-02-23T23:59:59)
+      required: false
+      example: "2026-02-23T23:59:59"
+      selector:
+        datetime:
+
+set_odometer:
+  name: Ajuster le kilométrage
+  description: Définir le kilométrage réel de la moto (à faire une seule fois)
+  fields:
+    entity_id:
+      name: Capteur
+      description: Le capteur odometer à ajuster
+      required: true
+      example: "sensor.tmax_530_odometer"
+      selector:
+        entity:
+          domain: sensor
+          integration: georide_trips
+    value:
+      name: Kilométrage actuel
+      description: Le kilométrage actuel affiché sur le compteur de votre moto
+      required: true
+      example: 15234.5
+      selector:
+        number:
+          min: 0
+          max: 500000
+          step: 0.1
+          unit_of_measurement: "km"
+          mode: box
+
+reset_odometer:
+  name: Réinitialiser le kilométrage
+  description: Remettre le kilométrage sur la valeur du tracker uniquement
+  fields:
+    entity_id:
+      name: Capteur
+      description: Le capteur odometer à réinitialiser
+      required: true
+      example: "sensor.tmax_530_odometer"
+      selector:
+        entity:
+          domain: sensor
+          integration: georide_trips
