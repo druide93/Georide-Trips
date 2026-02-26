@@ -1,12 +1,12 @@
 blueprint:
-  name: "Moto GeoRide - Suivi complet (v27)"
+  name: "Moto GeoRide - Suivi complet (v28.1)"
   description: |
     # 🏍️ Moto GeoRide - Suivi complet
 
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
 
-    *Version : 2026.02.25d*
+    *Version : 2026.02.26b*
 
     ---
 
@@ -118,15 +118,6 @@ blueprint:
               integration: georide_trips
               domain: button
 
-        btn_refresh_odometer:
-          name: "Bouton Refresh Odometer (fallback)"
-          description: >
-            `button.<moto>_refresh_odometer` — Utilisé uniquement si Socket.IO est désactivé.
-            Avec Socket.IO actif, l'odometer se met à jour automatiquement.
-          selector:
-            entity:
-              integration: georide_trips
-              domain: button
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 3 — CARBURANT
@@ -205,10 +196,7 @@ blueprint:
       input:
         n_intervalle_km_chaine:
           name: "Intervalle km entre entretiens"
-          description: >
-            `number.<moto>_entretien_chaine_intervalle_km`
-            Utilisé uniquement pour afficher `{{ km_restants_chaine }}` dans le message de notification.
-            Le déclenchement de l'alerte est géré automatiquement par `binary_sensor.<moto>_chaine_requise`.
+          description: "`number.<moto>_entretien_chaine_intervalle_km`"
           selector:
             entity:
               integration: georide_trips
@@ -216,10 +204,7 @@ blueprint:
 
         n_seuil_alerte_chaine:
           name: "Seuil d'alerte (km restants)"
-          description: >
-            `number.<moto>_entretien_chaine_seuil_alerte`
-            Utilisé uniquement pour afficher `{{ km_restants_chaine }}` dans le message de notification.
-            Le seuil de déclenchement réel est lu directement par le binary sensor Python.
+          description: "`number.<moto>_entretien_chaine_seuil_alerte`"
           selector:
             entity:
               integration: georide_trips
@@ -272,10 +257,7 @@ blueprint:
       input:
         n_intervalle_km_vidange:
           name: "Intervalle km entre vidanges"
-          description: >
-            `number.<moto>_vidange_intervalle_km`
-            Utilisé uniquement pour afficher `{{ km_restants_vidange }}` dans le message de notification.
-            Le déclenchement de l'alerte est géré automatiquement par `binary_sensor.<moto>_vidange_requise`.
+          description: "`number.<moto>_vidange_intervalle_km`"
           selector:
             entity:
               integration: georide_trips
@@ -283,10 +265,7 @@ blueprint:
 
         n_seuil_alerte_vidange:
           name: "Seuil d'alerte (km restants)"
-          description: >
-            `number.<moto>_vidange_seuil_alerte`
-            Utilisé uniquement pour afficher `{{ km_restants_vidange }}` dans le message de notification.
-            Le seuil de déclenchement réel est lu directement par le binary sensor Python.
+          description: "`number.<moto>_vidange_seuil_alerte`"
           selector:
             entity:
               integration: georide_trips
@@ -339,10 +318,7 @@ blueprint:
       input:
         n_intervalle_km_revision:
           name: "Intervalle km entre révisions"
-          description: >
-            `number.<moto>_revision_intervalle_km`
-            Utilisé uniquement pour afficher `{{ km_restants_revision }}` dans le message de notification.
-            Le déclenchement de l'alerte est géré automatiquement par `binary_sensor.<moto>_revision_requise`.
+          description: "`number.<moto>_revision_intervalle_km`"
           selector:
             entity:
               integration: georide_trips
@@ -360,10 +336,7 @@ blueprint:
 
         n_seuil_alerte_revision:
           name: "Seuil d'alerte (km restants)"
-          description: >
-            `number.<moto>_revision_seuil_alerte`
-            Utilisé uniquement pour afficher `{{ km_restants_revision }}` dans le message de notification.
-            Le seuil de déclenchement réel est lu directement par le binary sensor Python.
+          description: "`number.<moto>_revision_seuil_alerte`"
           selector:
             entity:
               integration: georide_trips
@@ -806,7 +779,6 @@ variables:
   btn_enregistrer_chaine: !input btn_enregistrer_chaine
   btn_enregistrer_vidange: !input btn_enregistrer_vidange
   btn_enregistrer_revision: !input btn_enregistrer_revision
-  btn_refresh_odometer: !input btn_refresh_odometer
   btn_refresh_trips: !input btn_refresh_trips
   activer_stats_hebdo: !input activer_stats_hebdo
   activer_stats_mensuelles: !input activer_stats_mensuelles
@@ -827,16 +799,6 @@ variables:
 triggers:
 
   - trigger: state
-    entity_id: !input odometer_sensor
-    id: odometer_change
-    not_from:
-      - "unavailable"
-      - "unknown"
-    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
-      - "unavailable"
-      - "unknown"
-
-  - trigger: state
     entity_id: !input locked_sensor
     to: "off"
     id: moto_verrouillee
@@ -850,7 +812,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:
       - "unavailable"
       - "unknown"
 
@@ -892,7 +854,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:
       - "unavailable"
       - "unknown"
 
@@ -902,7 +864,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
+    not_to:
       - "unavailable"
       - "unknown"
 
@@ -912,17 +874,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to:                  # ← FIX : évite déclenchement lors du passage vers unavailable au reload
-      - "unavailable"
-      - "unknown"
-
-  - trigger: state
-    entity_id: !input btn_refresh_odometer
-    id: odometer_change
-    not_from:
-      - "unavailable"
-      - "unknown"
-    not_to:                  # ← FIX : cohérence avec les autres triggers boutons
+    not_to:
       - "unavailable"
       - "unknown"
 
@@ -932,7 +884,7 @@ triggers:
     not_from:
       - "unavailable"
       - "unknown"
-    not_to:                  # ← FIX : évite alerte "unavailable" au reload
+    not_to:
       - "unavailable"
       - "unknown"
 
@@ -1097,15 +1049,15 @@ actions:
                 notification_id: "revision_{{ moto_nom | slugify }}"
 
     # ══════════════════════════════════════════════════════════════════════
-    # 🗺️ NOUVEAU TRAJET
+    # 🗺️ NOUVEAU TRAJET (voie principale)
     # Déclenchée par moto_verrouillee (locked_sensor → OFF = verrouillé).
     # Signal fiable d'arrêt définitif, insensible aux feux rouges.
     #
     # Stratégie :
     #   1. Appuyer sur btn_refresh_trips pour forcer un fetch immédiat de l'API.
     #   2. Attendre (wait_for_trigger) que last_trip_sensor change, max 3 min.
-    #      → Les données ont le temps d'arriver car le verrouillage est polling 5 min.
-    #   3. Lire distance_trajet depuis les attributs frais de last_trip_sensor.
+    #   3. Lire distance_trajet depuis wait.trigger.to_state.attributes (données
+    #      fraîches du trigger) ou fallback state_attr si timeout.
     # ══════════════════════════════════════════════════════════════════════
     - conditions:
         - condition: trigger
@@ -1129,9 +1081,15 @@ actions:
             minutes: 3
           continue_on_timeout: true
 
-        # Lire la distance du dernier trajet (données fraîches ou timeout)
+        # Lire la distance depuis les attributs du trigger (données fraîches)
+        # ou fallback sur state_attr si timeout (wait.trigger est None)
         - variables:
-            distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
+            distance_trajet: >
+              {% if wait.trigger %}
+                {{ wait.trigger.to_state.attributes.distance_km | float(0) }}
+              {% else %}
+                {{ state_attr(last_trip_sensor, 'distance_km') | float(0) }}
+              {% endif %}
 
         # Sortie anticipée si trajet trop court
         - condition: template
@@ -1182,9 +1140,9 @@ actions:
               true
             {% endif %}
       sequence:
-        # Lire la distance du dernier trajet
+        # Lire la distance depuis les attributs du trigger (données fraîches du changement)
         - variables:
-            distance_trajet: "{{ state_attr(last_trip_sensor | default(''), 'distance_km') | float(0) }}"
+            distance_trajet: "{{ trigger.to_state.attributes.distance_km | float(0) }}"
 
         # Sortie anticipée si trajet trop court
         - condition: template

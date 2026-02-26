@@ -43,9 +43,6 @@ Entités number rattachées au device de chaque moto :
 
 ── Offset ────────────────────────────────────────────────────────
 - odometer_offset               : décalage kilométrage (km avant tracker)
-
-── Plein en attente (usage interne) ──────────────────────────────
-- plein_pending_odometer        : odometer provisoire au moment du plein (avant le trajet en cours)
 """
 import logging
 
@@ -145,17 +142,6 @@ NUMBER_DESCRIPTIONS = [
         "icon": "mdi:counter",
         "unit": None,
         "min": 0, "max": 9_999, "step": 1, "default": 0,
-        "mode": NumberMode.BOX,
-        "entity_category": EntityCategory.DIAGNOSTIC,
-    },
-
-    # ── Plein en attente (usage interne) ─────────────────────────────────────
-    {
-        "key": "plein_pending_odometer",
-        "name": "Plein - Odometer provisoire",
-        "icon": "mdi:gas-station-outline",
-        "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 200_000, "step": 0.1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
