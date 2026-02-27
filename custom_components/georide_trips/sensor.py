@@ -50,12 +50,16 @@ async def async_setup_entry(
         # Planifier le refresh minuit du coordinator lifetime
         lifetime_coordinator.schedule_midnight_refresh()
 
-        # Dès qu'un nouveau trajet est détecté → refresh immédiat du coordinator lifetime
-        def _on_new_trip(lc=lifetime_coordinator):
-            hass.async_create_task(lc.async_request_refresh())
+        # Dès qu'un arrêt est confirmé (verrouillage) → refresh immédiat du coordinator lifetime
+        # on_stop_confirmed est one-shot : on le re-enregistre à chaque déclenchement
+        def _register_stop_cb(lc=lifetime_coordinator, coord=coordinator):
+            def _on_stop(lc=lc, coord=coord):
+                hass.async_create_task(lc.async_request_refresh())
+                # Re-enregistrer pour le prochain arrêt
+                _register_stop_cb(lc, coord)
+            coord.on_stop_confirmed(_on_stop)
 
-        unregister_new_trip = coordinator.on_new_trip(_on_new_trip)
-        entry.async_on_unload(unregister_new_trip)
+        _register_stop_cb(lifetime_coordinator, coordinator)
 
         odometer_sensor = GeoRideRealOdometerSensor(lifetime_coordinator, coordinator, entry, tracker, hass)
         autonomy_sensor = GeoRideAutonomySensor(entry, tracker, hass, odometer_sensor)
@@ -104,13 +108,10 @@ async def async_setup_entry(
 class GeoRideTripsCoordinator(DataUpdateCoordinator):
     """Coordinator to manage fetching GeoRide trips data (30 days).
 
-    Détecte automatiquement les nouveaux trajets de deux façons :
-    1. StatusCoordinator (polling 5 min) : dès que isLocked passe à True
-       (transition déverrouillé → verrouillé), un refresh est déclenché.
-       Le verrouillage est un signal fiable de fin de trajet, insensible
-       aux micro-arrêts (feux rouges, etc.).
-    2. Polling (filet de sécurité) : à chaque fetch, si le dernier trajet
-       a changé, les callbacks on_new_trip() sont appelés.
+    Détecte la fin de trajet via le StatusCoordinator (polling 5 min) :
+    dès que isLocked passe à True (transition déverrouillé → verrouillé),
+    un refresh est déclenché. Le verrouillage est le seul signal fiable
+    de fin de trajet, insensible aux micro-arrêts (feux rouges, etc.).
     """
 
     def __init__(self, hass, api, tracker_id, tracker_name, scan_interval=3600, trips_days_back=30):
@@ -118,8 +119,6 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
         self.tracker_id = tracker_id
         self.tracker_name = tracker_name
         self.trips_days_back = trips_days_back
-        self._last_trip_id: str | None = None
-        self._new_trip_callbacks: list = []
         self._stop_confirmed_callbacks: list = []
         self._status_unsub: callable | None = None
         self._status_coordinator = None
@@ -131,20 +130,6 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             name=f"GeoRide Trips {tracker_name}",
             update_interval=timedelta(seconds=scan_interval),
         )
-
-    def on_new_trip(self, callback) -> callable:
-        """Enregistrer un callback appelé quand un nouveau trajet est détecté.
-
-        Returns:
-            Fonction de désenregistrement.
-        """
-        self._new_trip_callbacks.append(callback)
-        def unregister():
-            try:
-                self._new_trip_callbacks.remove(callback)
-            except ValueError:
-                pass
-        return unregister
 
     def on_stop_confirmed(self, callback) -> callable:
         """Enregistrer un callback one-shot appelé lors du verrouillage du tracker.
@@ -246,22 +231,6 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
                 trips.sort(key=lambda x: x.get("startTime", ""), reverse=True)
 
             _LOGGER.debug("Fetched %d trips for tracker %s", len(trips), self.tracker_id)
-
-            # Détecter un nouveau trajet (filet de sécurité si Socket.IO est down)
-            if trips:
-                latest = trips[0]
-                latest_id = latest.get("id") or latest.get("startTime", "")
-                if self._last_trip_id is not None and latest_id != self._last_trip_id:
-                    _LOGGER.info(
-                        "New trip detected for %s (was %s, now %s) — triggering lifetime refresh",
-                        self.tracker_name, self._last_trip_id, latest_id,
-                    )
-                    for cb in list(self._new_trip_callbacks):
-                        try:
-                            cb()
-                        except Exception as err:
-                            _LOGGER.error("Error in new_trip callback: %s", err)
-                self._last_trip_id = latest_id
 
             return trips
 

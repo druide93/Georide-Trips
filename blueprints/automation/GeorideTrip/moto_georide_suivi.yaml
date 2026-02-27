@@ -6,7 +6,7 @@ blueprint:
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
 
-    *Version : 2026.02.26b*
+    *Version : 2026.02.27*
 
     ---
 
@@ -18,9 +18,7 @@ blueprint:
 
     ### 🗺️ Notification nouveau trajet
 
-    La fin de trajet est détectée par le **verrouillage du tracker** (`binary_sensor.<moto>_verrouille` → OFF = verrouillé), signal fiable d'arrêt définitif. Le blueprint appuie immédiatement sur **Refresh Trips** puis attend jusqu'à 3 min que `last_trip_sensor` se mette à jour. La notification part dès que les données sont fraîches.
-
-    Le fallback `nouveau_trajet` (changement de `last_trip_sensor`) couvre le cas où le verrouillage n'a pas encore déclenché. Anti-doublon simple : si `locked_sensor` est passé à `off` (verrouillé) depuis moins de 3 min, le fallback est ignoré (trajet déjà traité).
+    La fin de trajet est détectée exclusivement par le **verrouillage du tracker** (`binary_sensor.<moto>_verrouille` → OFF = verrouillé), signal fiable d'arrêt définitif, insensible aux feux rouges et micro-arrêts. Le blueprint appuie immédiatement sur **Refresh Trips** puis attend jusqu'à 3 min que `last_trip_sensor` se mette à jour. La notification part dès que les données sont fraîches.
 
     ### 🔗 Entretien chaîne
 
@@ -806,16 +804,6 @@ triggers:
       - "unavailable"
       - "unknown"
 
-  - trigger: state
-    entity_id: !input last_trip_sensor
-    id: nouveau_trajet
-    not_from:
-      - "unavailable"
-      - "unknown"
-    not_to:
-      - "unavailable"
-      - "unknown"
-
   - trigger: time
     at: !input heure_stats_hebdo
     id: stats_hebdo
@@ -1096,59 +1084,6 @@ actions:
           value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
 
         # Lire l'odometer (à jour via Socket.IO)
-        - variables:
-            odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
-            km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
-
-        # Notification
-        - action: "{{ notify_service }}"
-          data:
-            title: !input notif_trajet_titre
-            message: !input notif_trajet_message
-        - if:
-            - condition: template
-              value_template: !input notif_trajet_persistante
-          then:
-            - action: persistent_notification.create
-              data:
-                title: !input notif_trajet_titre
-                message: !input notif_trajet_message
-                notification_id: "trajet_{{ moto_nom | slugify }}"
-
-    # ══════════════════════════════════════════════════════════════════════
-    # 🗺️ NOUVEAU TRAJET (fallback)
-    # Déclenché par nouveau_trajet (changement de last_trip_sensor).
-    # Couvre le cas où le verrouillage n'a pas encore déclenché moto_verrouillee.
-    #
-    # Anti-doublon simple : si locked_sensor est passé à "off" (verrouillé)
-    # depuis moins de 3 min, c'est que moto_verrouillee a déjà traité
-    # ce trajet → on ignore.
-    # ══════════════════════════════════════════════════════════════════════
-    - conditions:
-        - condition: trigger
-          id: nouveau_trajet
-        - condition: template
-          value_template: "{{ notif_trajet_active }}"
-        # Anti-doublon : si locked_sensor vient de passer à off (< 3 min),
-        # moto_verrouillee a déjà géré la notification → on sort
-        - condition: template
-          value_template: >
-            {% set last_changed = states[locked_sensor].last_changed %}
-            {% if last_changed %}
-              {{ (now() - last_changed).total_seconds() > 180 or not is_state(locked_sensor, 'off') }}
-            {% else %}
-              true
-            {% endif %}
-      sequence:
-        # Lire la distance depuis les attributs du trigger (données fraîches du changement)
-        - variables:
-            distance_trajet: "{{ trigger.to_state.attributes.distance_km | float(0) }}"
-
-        # Sortie anticipée si trajet trop court
-        - condition: template
-          value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
-
-        # Lire l'odometer frais
         - variables:
             odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
             km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"

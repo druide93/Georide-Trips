@@ -1,5 +1,4 @@
 """GeoRide Trips buttons - Refresh buttons and maintenance record buttons."""
-import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -247,7 +246,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         • Éteindre le switch "Faire le plein"
         • S'abonner à la prochaine fin de trajet confirmée (on_stop_confirmed) du coordinator
 
-    Étape 2 (_on_stop_confirmed_for_plein) — déclenchée à la fin du trajet (verrouillage) :
+    Étape 2 (_on_stop_confirmed_for_plein) — déclenchée au verrouillage :
         • Appel API get_trips(plein_pending_at → now) → distance post-plein
         • odometer_au_plein = odometer_actuel - distance_post_plein
         • Calcul distance inter-plein
@@ -255,13 +254,9 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         • Recalcul moyenne glissante (max 3 pleins)
         • Mise à jour km_dernier_plein + nb_pleins_enregistres
         • Reset plein_pending_at = None (sentinel epoch 1970)
-
-    Fallback : si aucune fin de trajet n'est détectée dans FALLBACK_TIMEOUT secondes,
-        utiliser odometer_actuel directement (distance_post_plein = 0).
     """
 
     HIST_SLOTS = 3
-    FALLBACK_TIMEOUT = 30 * 60  # 30 min
 
     def __init__(
         self,
@@ -285,9 +280,8 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         self._attr_unique_id = f"{self.tracker_id}_confirmer_plein"
         self._attr_icon = "mdi:gas-station-outline"
 
-        # Gestion de l'abonnement au stop_confirmed et du timer fallback
+        # Gestion de l'abonnement au stop_confirmed
         self._unregister_stop_cb: callable | None = None
-        self._fallback_timer: asyncio.TimerHandle | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -386,20 +380,28 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         )
 
     def _cancel_pending(self) -> None:
-        """Annuler l'abonnement stop_confirmed et le timer fallback en cours."""
+        """Annuler l'abonnement stop_confirmed en cours."""
         if self._unregister_stop_cb:
             self._unregister_stop_cb()
             self._unregister_stop_cb = None
-        if self._fallback_timer:
-            self._fallback_timer.cancel()
-            self._fallback_timer = None
+
+    async def async_added_to_hass(self) -> None:
+        """Au démarrage, reset plein_pending_at si non-null (redémarrage HA détecté)."""
+        await super().async_added_to_hass()
+        plein_pending = self._get_datetime("plein_pending_at")
+        if plein_pending is not None:
+            _LOGGER.warning(
+                "%s: plein_pending_at non-null au démarrage (%s) — reset (redémarrage HA détecté)",
+                self.tracker_name, plein_pending.isoformat(),
+            )
+            await self._set_datetime("plein_pending_at", None)
 
     # ── Étape 1 : press immédiat ──────────────────────────────────────────────
 
     async def async_press(self) -> None:
-        """Étape 1 — Horodatage du plein + attendre la fin du prochain trajet."""
+        """Étape 1 — Horodatage du plein + attendre le prochain verrouillage."""
         # Si un plein est déjà en attente, l'annuler proprement
-        if self._unregister_stop_cb or self._fallback_timer:
+        if self._unregister_stop_cb:
             _LOGGER.warning(
                 "%s: nouveau press plein alors qu'un plein était déjà en attente — annulation",
                 self.tracker_name,
@@ -412,55 +414,32 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         await self._set_datetime("plein_pending_at", now)
 
         _LOGGER.info(
-            "%s: plein enregistré à %s — attente fin de trajet pour calcul précis",
+            "%s: plein enregistré à %s — attente verrouillage pour calcul précis",
             self.tracker_name, now.strftime("%H:%M:%S"),
         )
 
-        # S'abonner à la prochaine fin de trajet confirmée (verrouillage)
+        # S'abonner au prochain verrouillage (one-shot)
         self._unregister_stop_cb = self._coordinator.on_stop_confirmed(
             self._on_stop_confirmed_for_plein
-        )
-
-        # Timer fallback : si aucune fin de trajet dans FALLBACK_TIMEOUT → utiliser odometer actuel
-        self._fallback_timer = self._hass.loop.call_later(
-            self.FALLBACK_TIMEOUT,
-            lambda: self._hass.async_create_task(self._apply_fallback()),
         )
 
     # ── Étape 2 : fin de trajet confirmée ────────────────────────────────────
 
     def _on_stop_confirmed_for_plein(self) -> None:
-        """Callback appelé par le coordinator lors de la détection d'une fin de trajet (verrouillage)."""
-        # Annuler le fallback timer puisque la fin de trajet est arrivée à temps
-        if self._fallback_timer:
-            self._fallback_timer.cancel()
-            self._fallback_timer = None
+        """Callback appelé par le coordinator lors du verrouillage du tracker."""
         # _unregister_stop_cb est déjà consommé (one-shot), on nettoie la référence
         self._unregister_stop_cb = None
+        self._hass.async_create_task(self._compute_and_record_plein())
 
-        self._hass.async_create_task(self._compute_and_record_plein(use_fallback=False))
+    # ── Calcul au verrouillage ────────────────────────────────────────────────
 
-    async def _apply_fallback(self) -> None:
-        """Appelé si aucune fin de trajet dans FALLBACK_TIMEOUT — utiliser odometer actuel directement."""
-        self._cancel_pending()
-        _LOGGER.warning(
-            "%s: timeout fallback plein (%ds) — utilisation odometer actuel",
-            self.tracker_name, self.FALLBACK_TIMEOUT,
-        )
-        await self._compute_and_record_plein(use_fallback=True)
-
-    # ── Calcul commun (fin de trajet ou fallback) ─────────────────────────────
-
-    async def _compute_and_record_plein(self, use_fallback: bool) -> None:
+    async def _compute_and_record_plein(self) -> None:
         """Calculer l'odometer au plein et enregistrer toutes les métriques.
 
         Logique :
         - plein_pending_at  = horodatage du plein (datetime UTC)
         - Appel API get_trips(plein_pending_at → now) → distance parcourue APRÈS le plein
         - odometer_au_plein = odometer_actuel - distance_post_plein
-
-        Fallback : si API échoue ou timeout → distance_post_plein = 0,
-            odometer_au_plein = odometer_actuel directement.
         """
         from .const import METERS_TO_KM
 
@@ -485,20 +464,13 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             return
 
         # ── Distance parcourue APRÈS le plein (plein_pending_at → maintenant) ──
-        if use_fallback:
-            distance_post_plein = 0.0
-            _LOGGER.warning(
-                "%s: fallback plein — distance post-plein = 0, odometer_au_plein = odometer_actuel",
-                self.tracker_name,
-            )
-        else:
-            now_dt = datetime.now(timezone.utc)
-            distance_post_plein = await self._fetch_post_plein_distance(plein_dt, now_dt, METERS_TO_KM)
+        now_dt = datetime.now(timezone.utc)
+        distance_post_plein = await self._fetch_post_plein_distance(plein_dt, now_dt, METERS_TO_KM)
 
         odometer_au_plein = round(odometer_actuel - distance_post_plein, 2)
         _LOGGER.info(
-            "%s: odometer plein = %.1f km (actuel=%.1f - post_plein=%.1f km, fallback=%s)",
-            self.tracker_name, odometer_au_plein, odometer_actuel, distance_post_plein, use_fallback,
+            "%s: odometer plein = %.1f km (actuel=%.1f - post_plein=%.1f km)",
+            self.tracker_name, odometer_au_plein, odometer_actuel, distance_post_plein,
         )
 
         if odometer_au_plein <= 0:

@@ -79,7 +79,12 @@ class GeoRideTripsAPI:
         if to_date is None:
             to_date = datetime.now(timezone.utc)
 
-        # Format dates
+        # Convertir en UTC puis formater sans fuseau (l'API GeoRide attend de l'UTC pur)
+        if from_date.tzinfo is not None:
+            from_date = from_date.astimezone(timezone.utc).replace(tzinfo=None)
+        if to_date.tzinfo is not None:
+            to_date = to_date.astimezone(timezone.utc).replace(tzinfo=None)
+
         from_str = from_date.strftime("%Y%m%dT%H%M%S")
         to_str = to_date.strftime("%Y%m%dT%H%M%S")
 
