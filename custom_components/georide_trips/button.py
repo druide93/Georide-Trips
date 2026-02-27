@@ -43,6 +43,9 @@ async def async_setup_entry(
                 api=api,
                 coordinator=coordinators[tracker_id],
             ),
+            GeoRideAppliquerAutonomieButton(
+                hass, entry, tracker,
+            ),
             GeoRideRecordMaintenanceButton(
                 hass, entry, tracker, "chaine",
                 icon="mdi:link-variant",
@@ -510,7 +513,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         # ── Moyenne glissante (slots non-nuls, max HIST_SLOTS) ─────────────
         slots = [s for s in [distance_inter_plein, hist_1, hist_2] if s > 0]
         slots = slots[:self.HIST_SLOTS]
-        moyenne = round(sum(slots) / len(slots), 1)
+        moyenne = round(sum(slots) / len(slots))
 
         nb_pleins = int(self._get_number("nb_pleins_enregistres")) + 1
 
@@ -521,7 +524,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         _LOGGER.info(
             "%s: plein confirmé — odometer=%.1f km, inter-plein=%.1f km, "
-            "moyenne=%.1f km (%d valeur(s)), nb_pleins=%d",
+            "moyenne=%d km (%d valeur(s)), nb_pleins=%d",
             self.tracker_name, odometer_au_plein, distance_inter_plein,
             moyenne, len(slots), nb_pleins,
         )
@@ -566,3 +569,82 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
                 self.tracker_name, err,
             )
             return 0.0
+
+
+class GeoRideAppliquerAutonomieButton(ButtonEntity):
+    """Bouton pour appliquer l'autonomie moyenne calculée comme autonomie de référence.
+
+    `button.<moto>_appliquer_autonomie_calculee`
+
+    Copie la valeur de `number.<moto>_carburant_autonomie_moyenne_calculee`
+    dans `number.<moto>_autonomie_totale`.
+
+    Utilisable :
+    - Manuellement depuis l'UI HA
+    - Via le blueprint après notification de nouvelle moyenne disponible
+      (action mobile ✅ Appliquer)
+
+    Pré-condition : nb_pleins_enregistres >= 2 et autonomie_moyenne_calculee > 0.
+    Si non satisfaite, log un warning et ne fait rien.
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tracker: dict) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._tracker = tracker
+
+        self.tracker_id = str(tracker.get("trackerId"))
+        self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
+        self._prefix = self.tracker_name.lower().replace(" ", "_")
+
+        self._attr_name = f"{self.tracker_name} Appliquer autonomie calculée"
+        self._attr_unique_id = f"{self.tracker_id}_appliquer_autonomie_calculee"
+        self._attr_icon = "mdi:check-circle-outline"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.tracker_id)},
+            name=f"{self.tracker_name} Trips",
+            manufacturer="GeoRide",
+            model=self._tracker.get("model", "GeoRide Tracker"),
+            sw_version=str(self._tracker.get("softwareVersion", "")),
+        )
+
+    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+        state = self._hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return default
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return default
+
+    async def async_press(self) -> None:
+        """Copier autonomie_moyenne_calculee → autonomie_totale."""
+        p = self._prefix
+        entity_moyenne  = f"number.{p}_carburant_autonomie_moyenne_calculee"
+        entity_nb_pleins = f"number.{p}_carburant_nombre_de_pleins_enregistres"
+        entity_totale   = f"number.{p}_autonomie_totale"
+
+        nb_pleins = self._get_float(entity_nb_pleins)
+        moyenne   = self._get_float(entity_moyenne)
+
+        if nb_pleins < 2 or moyenne <= 0:
+            _LOGGER.warning(
+                "%s: impossible d'appliquer l'autonomie calculée "
+                "(nb_pleins=%.0f, moyenne=%.1f km) — besoin d'au moins 2 pleins.",
+                self.tracker_name, nb_pleins, moyenne,
+            )
+            return
+
+        await self._hass.services.async_call(
+            "number", "set_value",
+            {"entity_id": entity_totale, "value": moyenne},
+            blocking=True,
+        )
+
+        _LOGGER.info(
+            "%s: autonomie_totale mise à jour → %.1f km (moyenne sur %.0f pleins)",
+            self.tracker_name, moyenne, nb_pleins,
+        )

@@ -12,13 +12,19 @@ blueprint:
 
     ### ⛽ Autonomie carburant
 
-    L'autonomie restante est calculée en temps réel par le sensor Python `sensor.<moto>_autonomie_restante`. Ce sensor utilise une **moyenne glissante sur les 3 derniers pleins** pour affiner l'autonomie théorique au fil du temps. Dès que la valeur passe sous le seuil configuré, le binary sensor `binary_sensor.<moto>_plein_requis` passe à `on` — ce changement déclenche directement la notification avec un bouton **✅ Plein effectué**.
+    L'autonomie restante est calculée en temps réel par le sensor Python `sensor.<moto>_autonomie_restante`. Ce sensor utilise exclusivement `number.<moto>_autonomie_totale` comme référence — la moyenne calculée ne s'applique **jamais automatiquement**.
 
-    À la confirmation du plein, le bouton `button.<moto>_confirmer_le_plein` enregistre automatiquement l'odometer précis au moment du plein (via appel API déclenché après 5 min d'arrêt) et met à jour l'historique des distances inter-plein. Le binary sensor repasse à `off` automatiquement dès que l'autonomie recalculée dépasse à nouveau le seuil.
+    À chaque confirmation de plein (dès le 2ème), le blueprint attend 6 min puis envoie une notification de proposition : **"📊 Nouvelle autonomie calculée : X km"** avec deux boutons :
+    - **✅ Appliquer** → met à jour l'autonomie de référence via `button.<moto>_appliquer_autonomie_calculee`
+    - **❌ Garder** → rien ne change, tu conserves ta valeur actuelle
+
+    Le bouton `button.<moto>_appliquer_autonomie_calculee` est également utilisable manuellement depuis l'UI HA à tout moment.
 
     ### 🗺️ Notification nouveau trajet
 
-    La fin de trajet est détectée exclusivement par le **verrouillage du tracker** (`binary_sensor.<moto>_verrouille` → OFF = verrouillé), signal fiable d'arrêt définitif, insensible aux feux rouges et micro-arrêts. Le blueprint appuie immédiatement sur **Refresh Trips** puis attend jusqu'à 3 min que `last_trip_sensor` se mette à jour. La notification part dès que les données sont fraîches.
+    La fin de trajet est détectée par le **verrouillage du tracker** (`binary_sensor.<moto>_verrouille` → OFF = verrouillé), signal fiable d'arrêt définitif. Le blueprint appuie immédiatement sur **Refresh Trips** puis attend jusqu'à 3 min que `last_trip_sensor` se mette à jour. La notification part dès que les données sont fraîches.
+
+    Le fallback `nouveau_trajet` (changement de `last_trip_sensor`) couvre le cas où le verrouillage n'a pas encore déclenché. Anti-doublon simple : si `locked_sensor` est passé à `off` (verrouillé) depuis moins de 3 min, le fallback est ignoré (trajet déjà traité).
 
     ### 🔗 Entretien chaîne
 
@@ -183,6 +189,17 @@ blueprint:
             entity:
               integration: georide_trips
               domain: binary_sensor
+
+        btn_appliquer_autonomie:
+          name: "Bouton — Appliquer l'autonomie calculée"
+          description: >
+            `button.<moto>_appliquer_autonomie_calculee`
+            Copie la moyenne glissante dans l'autonomie totale de référence.
+            Appuyé automatiquement si tu confirmes via la notification de proposition.
+          selector:
+            entity:
+              integration: georide_trips
+              domain: button
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 5 — ENTRETIEN : CHAÎNE
@@ -447,6 +464,15 @@ blueprint:
           description: >
             Identifiant unique, **différent pour chaque moto**.
             **Exemple :** `PLEIN_AFRICA_TWIN`
+          selector:
+            text:
+
+        action_appliquer_autonomie:
+          name: "Action mobile — Appliquer l'autonomie calculée"
+          description: >
+            Identifiant unique, **différent pour chaque moto**.
+            Utilisé par la notification de proposition après chaque plein (dès le 2ème).
+            **Exemple :** `APPLIQUER_AUTO_AFRICA_TWIN`
           selector:
             text:
 
@@ -743,6 +769,7 @@ variables:
   sensor_autonomie_restante: !input sensor_autonomie_restante
   btn_confirmer_le_plein: !input btn_confirmer_le_plein
   switch_faire_le_plein: !input switch_faire_le_plein
+  btn_appliquer_autonomie: !input btn_appliquer_autonomie
   switch_entretien_chaine: !input switch_entretien_chaine
   switch_entretien_vidange: !input switch_entretien_vidange
   switch_entretien_revision: !input switch_entretien_revision
@@ -767,6 +794,7 @@ variables:
   notif_vidange_active: !input notif_vidange_active
   notif_revision_active: !input notif_revision_active
   action_plein: !input action_plein
+  action_appliquer_autonomie: !input action_appliquer_autonomie
   action_chaine: !input action_chaine
   action_vidange: !input action_vidange
   action_revision: !input action_revision
@@ -804,6 +832,16 @@ triggers:
       - "unavailable"
       - "unknown"
 
+  - trigger: state
+    entity_id: !input last_trip_sensor
+    id: nouveau_trajet
+    not_from:
+      - "unavailable"
+      - "unknown"
+    not_to:
+      - "unavailable"
+      - "unknown"
+
   - trigger: time
     at: !input heure_stats_hebdo
     id: stats_hebdo
@@ -817,6 +855,12 @@ triggers:
     event_data:
       action: !input action_plein
     id: confirm_plein
+
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: !input action_appliquer_autonomie
+    id: confirm_appliquer_autonomie
 
   - trigger: event
     event_type: mobile_app_notification_action
@@ -1104,6 +1148,59 @@ actions:
                 notification_id: "trajet_{{ moto_nom | slugify }}"
 
     # ══════════════════════════════════════════════════════════════════════
+    # 🗺️ NOUVEAU TRAJET (fallback)
+    # Déclenché par nouveau_trajet (changement de last_trip_sensor).
+    # Couvre le cas où le verrouillage n'a pas encore déclenché moto_verrouillee.
+    #
+    # Anti-doublon simple : si locked_sensor est passé à "off" (verrouillé)
+    # depuis moins de 3 min, c'est que moto_verrouillee a déjà traité
+    # ce trajet → on ignore.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: nouveau_trajet
+        - condition: template
+          value_template: "{{ notif_trajet_active }}"
+        # Anti-doublon : si locked_sensor vient de passer à off (< 3 min),
+        # moto_verrouillee a déjà géré la notification → on sort
+        - condition: template
+          value_template: >
+            {% set last_changed = states[locked_sensor].last_changed %}
+            {% if last_changed %}
+              {{ (now() - last_changed).total_seconds() > 180 or not is_state(locked_sensor, 'off') }}
+            {% else %}
+              true
+            {% endif %}
+      sequence:
+        # Lire la distance depuis les attributs du trigger (données fraîches du changement)
+        - variables:
+            distance_trajet: "{{ trigger.to_state.attributes.distance_km | float(0) }}"
+
+        # Sortie anticipée si trajet trop court
+        - condition: template
+          value_template: "{{ distance_trajet >= states(n_seuil_distance_trajet) | float(2) }}"
+
+        # Lire l'odometer frais
+        - variables:
+            odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
+            km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
+
+        # Notification
+        - action: "{{ notify_service }}"
+          data:
+            title: !input notif_trajet_titre
+            message: !input notif_trajet_message
+        - if:
+            - condition: template
+              value_template: !input notif_trajet_persistante
+          then:
+            - action: persistent_notification.create
+              data:
+                title: !input notif_trajet_titre
+                message: !input notif_trajet_message
+                notification_id: "trajet_{{ moto_nom | slugify }}"
+
+    # ══════════════════════════════════════════════════════════════════════
     # 📊 BILAN HEBDOMADAIRE
     # ══════════════════════════════════════════════════════════════════════
     - conditions:
@@ -1186,6 +1283,9 @@ actions:
     #   - met à jour km_au_dernier_plein et la moyenne glissante inter-plein
     # binary_sensor.<moto>_plein_requis repasse à off automatiquement dès que
     # l'autonomie recalculée dépasse à nouveau le seuil.
+    #
+    # Après le 2ème plein : notification de proposition si la moyenne calculée
+    # diffère de l'autonomie totale actuelle → boutons Appliquer / Garder.
     # ══════════════════════════════════════════════════════════════════════
     - conditions:
         - condition: trigger
@@ -1200,6 +1300,57 @@ actions:
             message: >
               Le plein sera enregistré après confirmation d'arrêt (sous 5 min).
               L'autonomie sera recalculée automatiquement.
+        # Attendre que le bouton Python ait calculé la nouvelle moyenne
+        # (déclenché au prochain verrouillage, typiquement ≤ 5 min)
+        - delay: "00:06:00"
+        - variables:
+            nb_pleins_enregistres: >
+              {% set p = moto_nom | lower | replace(' ', '_') %}
+              {{ states('number.' ~ p ~ '_carburant_nombre_de_pleins_enregistres') | float(0) | int }}
+            autonomie_moyenne: >
+              {% set p = moto_nom | lower | replace(' ', '_') %}
+              {{ states('number.' ~ p ~ '_carburant_autonomie_moyenne_calculee') | float(0) | round(1) }}
+            autonomie_actuelle: >
+              {{ states(n_autonomie_totale) | float(0) | round(1) }}
+        - if:
+            - condition: template
+              value_template: "{{ nb_pleins_enregistres >= 2 and autonomie_moyenne > 0 and autonomie_moyenne != autonomie_actuelle }}"
+          then:
+            - action: "{{ notify_service }}"
+              data:
+                title: "📊 Nouvelle autonomie calculée — {{ moto_nom }}"
+                message: >
+                  Moyenne sur {{ nb_pleins_enregistres }} pleins : {{ autonomie_moyenne }} km.
+                  Autonomie actuelle : {{ autonomie_actuelle }} km.
+                  Voulez-vous mettre à jour la référence ?
+                data:
+                  actions:
+                    - action: "{{ action_appliquer_autonomie }}"
+                      title: "✅ Appliquer ({{ autonomie_moyenne }} km)"
+                    - action: DISMISS
+                      title: "❌ Garder ({{ autonomie_actuelle }} km)"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ✅ APPLICATION — AUTONOMIE CALCULÉE CONFIRMÉE
+    # Déclenché par l'action mobile "Appliquer" de la notification de proposition.
+    # Appuie sur le bouton Python qui copie autonomie_moyenne_calculee → autonomie_totale.
+    # ══════════════════════════════════════════════════════════════════════
+    - conditions:
+        - condition: trigger
+          id: confirm_appliquer_autonomie
+      sequence:
+        - action: button.press
+          target:
+            entity_id: !input btn_appliquer_autonomie
+        - variables:
+            autonomie_nouvelle: >
+              {% set p = moto_nom | lower | replace(' ', '_') %}
+              {{ states('number.' ~ p ~ '_carburant_autonomie_moyenne_calculee') | float(0) | round(1) }}
+        - action: "{{ notify_service }}"
+          data:
+            title: "✅ Autonomie mise à jour — {{ moto_nom }}"
+            message: >
+              Autonomie de référence : {{ autonomie_nouvelle }} km.
 
     # ══════════════════════════════════════════════════════════════════════
     # ✅ CONFIRMATION — CHAÎNE ENTRETENUE

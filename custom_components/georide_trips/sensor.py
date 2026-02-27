@@ -50,16 +50,12 @@ async def async_setup_entry(
         # Planifier le refresh minuit du coordinator lifetime
         lifetime_coordinator.schedule_midnight_refresh()
 
-        # Dès qu'un arrêt est confirmé (verrouillage) → refresh immédiat du coordinator lifetime
-        # on_stop_confirmed est one-shot : on le re-enregistre à chaque déclenchement
-        def _register_stop_cb(lc=lifetime_coordinator, coord=coordinator):
-            def _on_stop(lc=lc, coord=coord):
-                hass.async_create_task(lc.async_request_refresh())
-                # Re-enregistrer pour le prochain arrêt
-                _register_stop_cb(lc, coord)
-            coord.on_stop_confirmed(_on_stop)
+        # Dès qu'un nouveau trajet est détecté → refresh immédiat du coordinator lifetime
+        def _on_new_trip(lc=lifetime_coordinator):
+            hass.async_create_task(lc.async_request_refresh())
 
-        _register_stop_cb(lifetime_coordinator, coordinator)
+        unregister_new_trip = coordinator.on_new_trip(_on_new_trip)
+        entry.async_on_unload(unregister_new_trip)
 
         odometer_sensor = GeoRideRealOdometerSensor(lifetime_coordinator, coordinator, entry, tracker, hass)
         autonomy_sensor = GeoRideAutonomySensor(entry, tracker, hass, odometer_sensor)
@@ -108,10 +104,13 @@ async def async_setup_entry(
 class GeoRideTripsCoordinator(DataUpdateCoordinator):
     """Coordinator to manage fetching GeoRide trips data (30 days).
 
-    Détecte la fin de trajet via le StatusCoordinator (polling 5 min) :
-    dès que isLocked passe à True (transition déverrouillé → verrouillé),
-    un refresh est déclenché. Le verrouillage est le seul signal fiable
-    de fin de trajet, insensible aux micro-arrêts (feux rouges, etc.).
+    Détecte automatiquement les nouveaux trajets de deux façons :
+    1. StatusCoordinator (polling 5 min) : dès que isLocked passe à True
+       (transition déverrouillé → verrouillé), un refresh est déclenché.
+       Le verrouillage est un signal fiable de fin de trajet, insensible
+       aux micro-arrêts (feux rouges, etc.).
+    2. Polling (filet de sécurité) : à chaque fetch, si le dernier trajet
+       a changé, les callbacks on_new_trip() sont appelés.
     """
 
     def __init__(self, hass, api, tracker_id, tracker_name, scan_interval=3600, trips_days_back=30):
@@ -119,6 +118,8 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
         self.tracker_id = tracker_id
         self.tracker_name = tracker_name
         self.trips_days_back = trips_days_back
+        self._last_trip_id: str | None = None
+        self._new_trip_callbacks: list = []
         self._stop_confirmed_callbacks: list = []
         self._status_unsub: callable | None = None
         self._status_coordinator = None
@@ -130,6 +131,20 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
             name=f"GeoRide Trips {tracker_name}",
             update_interval=timedelta(seconds=scan_interval),
         )
+
+    def on_new_trip(self, callback) -> callable:
+        """Enregistrer un callback appelé quand un nouveau trajet est détecté.
+
+        Returns:
+            Fonction de désenregistrement.
+        """
+        self._new_trip_callbacks.append(callback)
+        def unregister():
+            try:
+                self._new_trip_callbacks.remove(callback)
+            except ValueError:
+                pass
+        return unregister
 
     def on_stop_confirmed(self, callback) -> callable:
         """Enregistrer un callback one-shot appelé lors du verrouillage du tracker.
@@ -231,6 +246,22 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
                 trips.sort(key=lambda x: x.get("startTime", ""), reverse=True)
 
             _LOGGER.debug("Fetched %d trips for tracker %s", len(trips), self.tracker_id)
+
+            # Détecter un nouveau trajet (filet de sécurité si Socket.IO est down)
+            if trips:
+                latest = trips[0]
+                latest_id = latest.get("id") or latest.get("startTime", "")
+                if self._last_trip_id is not None and latest_id != self._last_trip_id:
+                    _LOGGER.info(
+                        "New trip detected for %s (was %s, now %s) — triggering lifetime refresh",
+                        self.tracker_name, self._last_trip_id, latest_id,
+                    )
+                    for cb in list(self._new_trip_callbacks):
+                        try:
+                            cb()
+                        except Exception as err:
+                            _LOGGER.error("Error in new_trip callback: %s", err)
+                self._last_trip_id = latest_id
 
             return trips
 
@@ -1131,10 +1162,10 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
 
         slug = self.tracker_name.lower().replace(" ", "_")
         # Les slugs HA sont dérivés du name complet incluant le préfixe "Carburant - "
-        self._entity_km_dernier_plein   = f"number.{slug}_km_au_dernier_plein"
-        self._entity_autonomie_totale   = f"number.{slug}_autonomie_totale"
-        self._entity_autonomie_moyenne  = f"number.{slug}_carburant_autonomie_moyenne_calculee"
-        self._entity_nb_pleins          = f"number.{slug}_carburant_nombre_de_pleins_enregistres"
+        self._entity_km_dernier_plein  = f"number.{slug}_km_au_dernier_plein"
+        self._entity_autonomie_totale  = f"number.{slug}_autonomie_totale"
+        self._entity_autonomie_moyenne = f"number.{slug}_carburant_autonomie_moyenne_calculee"
+        self._entity_nb_pleins         = f"number.{slug}_carburant_nombre_de_pleins_enregistres"
 
         self._attr_unique_id = f"{self.tracker_id}_autonomie_restante"
         self._attr_name = f"{self.tracker_name} Autonomie restante"
@@ -1200,27 +1231,22 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         return default
 
     def _recalculate(self) -> None:
-        odometer_km       = self._odometer_sensor.native_value or 0.0
-        km_dernier_plein  = self._get_float(self._entity_km_dernier_plein)
-        autonomie_totale  = self._get_float(self._entity_autonomie_totale, 150.0)
-        autonomie_moyenne = self._get_float(self._entity_autonomie_moyenne)
-        nb_pleins         = self._get_float(self._entity_nb_pleins)
+        odometer_km      = self._odometer_sensor.native_value or 0.0
+        km_dernier_plein = self._get_float(self._entity_km_dernier_plein)
+        autonomie_totale = self._get_float(self._entity_autonomie_totale, 150.0)
 
-        # Choisir la référence d'autonomie
-        if nb_pleins >= 2 and autonomie_moyenne > 0:
-            autonomie_ref = autonomie_moyenne
-        else:
-            autonomie_ref = autonomie_totale
-
+        # autonomie_totale est la référence unique.
+        # La moyenne calculée (autonomie_moyenne_calculee) est proposée au choix
+        # via le bouton button.<moto>_appliquer_autonomie_calculee et la notification
+        # blueprint — elle ne s'applique pas automatiquement.
         km_parcourus = max(odometer_km - km_dernier_plein, 0.0)
-        km_restants  = max(autonomie_ref - km_parcourus, 0.0)
+        km_restants  = max(autonomie_totale - km_parcourus, 0.0)
 
         self._attr_native_value = round(km_restants, 1)
 
         _LOGGER.debug(
-            "Autonomie %s: ref=%.1f km, parcourus=%.1f km (depuis %.1f), restants=%.1f km (pleins: %d)",
-            self.tracker_name, autonomie_ref, km_parcourus, km_dernier_plein,
-            km_restants, int(nb_pleins),
+            "Autonomie %s: ref=%.1f km (manuelle), parcourus=%.1f km (depuis %.1f), restants=%.1f km",
+            self.tracker_name, autonomie_totale, km_parcourus, km_dernier_plein, km_restants,
         )
 
     @property
@@ -1229,9 +1255,9 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         autonomie_moyenne = self._get_float(self._entity_autonomie_moyenne)
         autonomie_totale  = self._get_float(self._entity_autonomie_totale, 150.0)
         return {
-            "autonomie_reference": "moyenne_calculee" if nb_pleins >= 2 and autonomie_moyenne > 0 else "theorique",
-            "autonomie_theorique_km": autonomie_totale,
-            "autonomie_moyenne_km": autonomie_moyenne if autonomie_moyenne > 0 else None,
+            "autonomie_reference": "manuelle",
+            "autonomie_totale_km": autonomie_totale,
+            "autonomie_moyenne_calculee_km": autonomie_moyenne if autonomie_moyenne > 0 else None,
             "nb_pleins_enregistres": int(nb_pleins),
             "km_dernier_plein": self._get_float(self._entity_km_dernier_plein),
         }

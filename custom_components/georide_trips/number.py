@@ -132,7 +132,7 @@ NUMBER_DESCRIPTIONS = [
         "name": "Carburant - Autonomie moyenne calculée",
         "icon": "mdi:gas-station-outline",
         "unit": UnitOfLength.KILOMETERS,
-        "min": 0, "max": 1_500, "step": 0.1, "default": 0,
+        "min": 0, "max": 1_500, "step": 1, "default": 0,
         "mode": NumberMode.BOX,
         "entity_category": EntityCategory.DIAGNOSTIC,
     },
