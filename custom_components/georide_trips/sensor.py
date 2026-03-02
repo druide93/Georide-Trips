@@ -589,7 +589,9 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
 
-        # Restaurer la dernière valeur connue
+        # Restaurer la dernière valeur connue — elle sera corrigée par le
+        # premier state_change_event quand les numbers seront restaurées.
+        # NE PAS appeler _recalculate() ici : les snapshots ne sont pas encore prêts.
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (None, "unknown", "unavailable"):
                 try:
@@ -606,7 +608,7 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
                 self._hass, watched, self._handle_state_change,
             )
         )
-        self._recalculate()
+        # Pas de _recalculate() ici — on attend le premier state_change_event
 
     @callback
     def _handle_state_change(self, event) -> None:
@@ -1019,6 +1021,8 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         self._last_known_tracker_km: float | None = None
         # Entity_id de l'offset — résolu dans async_added_to_hass via le registry
         self._offset_entity_id: str | None = None
+        # Flag pour éviter de publier une valeur parasite avant que l'offset soit restauré
+        self._offset_ready = False
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -1054,6 +1058,12 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
     @callback
     def _handle_offset_state_change(self, event) -> None:
+        if not self._offset_ready:
+            self._offset_ready = True
+            _LOGGER.debug(
+                "Odometer %s: offset prêt (%.2f km), première publication fiable",
+                self.tracker_name, self._get_offset_km(),
+            )
         self.async_write_ha_state()
 
     def _compute_tracker_km(self) -> tuple[float, float, str]:
@@ -1139,6 +1149,17 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
+        # Tant que l'offset n'a pas été restauré, ne pas publier de valeur
+        # pour éviter un spike dans l'historique.
+        # Exception : si offset_entity_id est None (pas d'offset configuré), on est prêt.
+        if self._offset_entity_id and not self._offset_ready:
+            # Vérifier si l'offset est déjà disponible (restauré entre-temps)
+            offset = self._hass.states.get(self._offset_entity_id)
+            if offset and offset.state not in (None, "unknown", "unavailable"):
+                self._offset_ready = True
+            else:
+                return None
+
         base_km, delta_km, _ = self._compute_tracker_km_guarded()
         offset_km = self._get_offset_km()
         return round(base_km + delta_km + offset_km, 2)
@@ -1316,8 +1337,8 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
             )
         )
 
-        # Calcul initial
-        self._recalculate()
+        # Pas de _recalculate() ici — on attend le premier state_change_event
+        # pour éviter des valeurs parasites avant la restauration des numbers
 
     @callback
     def _handle_state_change(self, event) -> None:
@@ -1458,7 +1479,8 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
                 self._hass, watched, self._handle_state_change,
             )
         )
-        self._recalculate()
+        # Pas de _recalculate() ici — on attend le premier state_change_event
+        # pour éviter des valeurs parasites avant la restauration des numbers
 
     @callback
     def _handle_state_change(self, event) -> None:
@@ -1630,7 +1652,7 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
                 hour=0, minute=0, second=0,
             )
         )
-        self._recalculate()
+        # Pas de _recalculate() ici — on attend le premier state_change_event
 
     @callback
     def _handle_state_change(self, event) -> None:
