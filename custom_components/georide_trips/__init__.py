@@ -38,6 +38,7 @@ PLATFORMS = [
 
 SERVICE_SET_ODOMETER = "set_odometer"
 SERVICE_GET_TRIPS = "get_trips"
+SERVICE_RESET_ODOMETER = "reset_odometer"
 
 SET_ODOMETER_SCHEMA = vol.Schema(
     {
@@ -51,6 +52,12 @@ GET_TRIPS_SCHEMA = vol.Schema(
         vol.Required("tracker_id"): cv.string,
         vol.Optional("from_date"): cv.string,
         vol.Optional("to_date"): cv.string,
+    }
+)
+
+RESET_ODOMETER_SCHEMA = vol.Schema(
+    {
+        vol.Required("entity_id"): cv.entity_id,
     }
 )
 
@@ -181,9 +188,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if socket_manager is not None:
         await socket_manager.start()
         _LOGGER.info("GeoRide Socket.IO manager started")
-
-        # Le câblage lock detection est fait via StatusCoordinator (indépendant du Socket.IO)
-        _LOGGER.info("GeoRide Socket.IO manager started")
     else:
         _LOGGER.info("GeoRide Socket.IO disabled by option")
 
@@ -200,6 +204,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("Entity %s not found or doesn't support set_odometer", entity_id)
 
     hass.services.async_register(DOMAIN, SERVICE_SET_ODOMETER, handle_set_odometer, schema=SET_ODOMETER_SCHEMA)
+
+    # Register service reset_odometer
+    async def handle_reset_odometer(call: ServiceCall):
+        """Handle reset_odometer service — set offset to 0."""
+        entity_id = call.data["entity_id"]
+
+        entity = hass.data["entity_components"]["sensor"].get_entity(entity_id)
+        if entity and hasattr(entity, "set_odometer"):
+            # Reset = set offset to 0, so odometer = tracker_km only
+            from .sensor import GeoRideRealOdometerSensor
+            if isinstance(entity, GeoRideRealOdometerSensor):
+                base_km, delta_km, _ = entity._compute_tracker_km()
+                entity.set_odometer(base_km + delta_km)
+                _LOGGER.info("Odometer reset for %s (offset → 0)", entity_id)
+            else:
+                _LOGGER.error("Entity %s is not a GeoRideRealOdometerSensor", entity_id)
+        else:
+            _LOGGER.error("Entity %s not found or doesn't support reset", entity_id)
+
+    hass.services.async_register(DOMAIN, SERVICE_RESET_ODOMETER, handle_reset_odometer, schema=RESET_ODOMETER_SCHEMA)
 
     # Register service get_trips (supports_response => résultat visible dans Developer Tools)
     async def handle_get_trips(call: ServiceCall):
@@ -303,6 +327,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if len(hass.data.get(DOMAIN, {})) <= 1:
         hass.services.async_remove(DOMAIN, SERVICE_SET_ODOMETER)
+        hass.services.async_remove(DOMAIN, SERVICE_RESET_ODOMETER)
         hass.services.async_remove(DOMAIN, SERVICE_GET_TRIPS)
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

@@ -223,34 +223,7 @@ class GeoRideTripsAPI:
             _LOGGER.error("Error getting trip positions: %s", err)
             return []
 
-    async def get_tracker_status(self, tracker_id: str) -> Optional[Dict[str, Any]]:
-        """Get tracker status (online/offline, isLocked, battery, etc.).
-
-        Utilise GET /user/trackers et filtre sur tracker_id.
-        Le GeoRideTrackerStatusCoordinator appelle cette méthode toutes les 5 min
-        pour alimenter les binary_sensors "En ligne" et "Verrouillé".
-        """
-        if not self.token:
-            await self.login()
-
-        try:
-            trackers = await self.get_trackers()
-            for tracker in trackers:
-                if str(tracker.get("trackerId")) == str(tracker_id):
-                    _LOGGER.debug(
-                        "Tracker status for %s: status=%s isLocked=%s",
-                        tracker_id,
-                        tracker.get("status"),
-                        tracker.get("isLocked"),
-                    )
-                    return tracker
-            _LOGGER.warning("Tracker %s not found in /user/trackers response", tracker_id)
-            return None
-        except Exception as err:
-            _LOGGER.error("Error getting tracker status: %s", err)
-            return None
-
-    async def set_eco_mode(self, tracker_id: str, enabled: bool) -> bool:
+    async def set_eco_mode(self, tracker_id: str, enabled: bool, _retry: bool = True) -> bool:
         """Enable or disable eco mode for a tracker.
 
         Endpoint: PUT /tracker/{tracker_id}/eco
@@ -275,10 +248,11 @@ class GeoRideTripsAPI:
                         tracker_id,
                     )
                     return True
-                elif response.status == 401:
+                elif response.status == 401 and _retry:
                     _LOGGER.warning("Token expired, re-authenticating...")
-                    await self.login()
-                    return await self.set_eco_mode(tracker_id, enabled)
+                    if await self.login():
+                        return await self.set_eco_mode(tracker_id, enabled, _retry=False)
+                    return False
                 else:
                     text = await response.text()
                     _LOGGER.error(
@@ -290,7 +264,7 @@ class GeoRideTripsAPI:
             _LOGGER.error("Error setting eco mode: %s", err)
             return False
 
-    async def sonor_alarm_off(self, tracker_id: str) -> bool:
+    async def sonor_alarm_off(self, tracker_id: str, _retry: bool = True) -> bool:
         """Arrêter l'alarme sonore du tracker (GeoRide 3 uniquement).
 
         Endpoint: POST /tracker/{tracker_id}/sonor-alarm/off
@@ -306,9 +280,10 @@ class GeoRideTripsAPI:
                 if response.status in (200, 204):
                     _LOGGER.info("Sonor alarm OFF for tracker %s", tracker_id)
                     return True
-                elif response.status == 401:
-                    await self.login()
-                    return await self.sonor_alarm_off(tracker_id)
+                elif response.status == 401 and _retry:
+                    if await self.login():
+                        return await self.sonor_alarm_off(tracker_id, _retry=False)
+                    return False
                 else:
                     text = await response.text()
                     _LOGGER.error("Failed sonor alarm off: status=%s body=%s", response.status, text)
@@ -317,7 +292,7 @@ class GeoRideTripsAPI:
             _LOGGER.error("Error sonor alarm off: %s", err)
             return False
 
-    async def toggle_lock(self, tracker_id: str) -> bool | None:
+    async def toggle_lock(self, tracker_id: str, _retry: bool = True) -> bool | None:
         """Toggle the lock state of a tracker.
 
         Endpoint: POST /tracker/{tracker_id}/toggleLock
@@ -341,10 +316,11 @@ class GeoRideTripsAPI:
                         tracker_id, locked,
                     )
                     return locked
-                elif response.status == 401:
+                elif response.status == 401 and _retry:
                     _LOGGER.warning("Token expired, re-authenticating...")
-                    await self.login()
-                    return await self.toggle_lock(tracker_id)
+                    if await self.login():
+                        return await self.toggle_lock(tracker_id, _retry=False)
+                    return None
                 else:
                     text = await response.text()
                     _LOGGER.error(

@@ -357,7 +357,9 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
             sw_version=str(self._tracker.get("softwareVersion", "")),
         )
 
-    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
+        if entity_id is None:
+            return default
         state = self._hass.states.get(entity_id)
         if state and state.state not in (None, "unknown", "unavailable"):
             try:
@@ -374,8 +376,13 @@ class _GeoRideAlerteBinarySensorBase(BinarySensorEntity):
         """Calculer si l'alerte doit être active."""
         raise NotImplementedError
 
+    def _resolve_entities(self) -> None:
+        """Résoudre les entity_id via le registry. À surcharger dans les sous-classes."""
+        pass
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        self._resolve_entities()
         self.async_on_remove(
             async_track_state_change_event(
                 self._hass,
@@ -403,15 +410,25 @@ class GeoRidePleinRequisBinarySensor(_GeoRideAlerteBinarySensorBase):
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
-        self._entity_autonomie = f"sensor.{self._slug}_autonomie_restante"
-        self._entity_seuil = f"number.{self._slug}_seuil_alerte_autonomie"
+        # Entity_id résolus dans async_added_to_hass
+        self._entity_autonomie: str | None = None
+        self._entity_seuil: str | None = None
         self._attr_unique_id = f"{self.tracker_id}_plein_requis"
         self._attr_name = f"{self.tracker_name} Plein requis"
         self._attr_icon = "mdi:gas-station-alert"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
+    def _resolve_entities(self) -> None:
+        from .helpers import resolve_entity_id
+        self._entity_autonomie = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "autonomie_restante"
+        )
+        self._entity_seuil = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "seuil_alerte_autonomie"
+        )
+
     def _watched_entities(self) -> list[str]:
-        return [self._entity_autonomie, self._entity_seuil]
+        return [eid for eid in [self._entity_autonomie, self._entity_seuil] if eid is not None]
 
     def _compute_is_on(self) -> bool:
         autonomie = self._get_float(self._entity_autonomie, -1.0)
@@ -430,15 +447,24 @@ class GeoRideChaineRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
-        self._entity_km_restants = f"sensor.{self._slug}_entretien_chaine_km_restants"
-        self._entity_seuil = f"number.{self._slug}_entretien_chaine_seuil_alerte"
+        self._entity_km_restants: str | None = None
+        self._entity_seuil: str | None = None
         self._attr_unique_id = f"{self.tracker_id}_chaine_requise"
         self._attr_name = f"{self.tracker_name} Entretien Chaîne - Requis"
         self._attr_icon = "mdi:link-variant-plus"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
+    def _resolve_entities(self) -> None:
+        from .helpers import resolve_entity_id
+        self._entity_km_restants = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "km_restants_chaine"
+        )
+        self._entity_seuil = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "seuil_alerte_chaine"
+        )
+
     def _watched_entities(self) -> list[str]:
-        return [self._entity_km_restants, self._entity_seuil]
+        return [eid for eid in [self._entity_km_restants, self._entity_seuil] if eid is not None]
 
     def _compute_is_on(self) -> bool:
         km_restants = self._get_float(self._entity_km_restants, 9999.0)
@@ -457,15 +483,24 @@ class GeoRideVidangeRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
-        self._entity_km_restants = f"sensor.{self._slug}_entretien_vidange_km_restants"
-        self._entity_seuil = f"number.{self._slug}_entretien_vidange_seuil_alerte"
+        self._entity_km_restants: str | None = None
+        self._entity_seuil: str | None = None
         self._attr_unique_id = f"{self.tracker_id}_vidange_requise"
         self._attr_name = f"{self.tracker_name} Entretien Vidange - Requise"
         self._attr_icon = "mdi:oil-level"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
+    def _resolve_entities(self) -> None:
+        from .helpers import resolve_entity_id
+        self._entity_km_restants = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "km_restants_vidange"
+        )
+        self._entity_seuil = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "seuil_alerte_vidange"
+        )
+
     def _watched_entities(self) -> list[str]:
-        return [self._entity_km_restants, self._entity_seuil]
+        return [eid for eid in [self._entity_km_restants, self._entity_seuil] if eid is not None]
 
     def _compute_is_on(self) -> bool:
         km_restants = self._get_float(self._entity_km_restants, 9999.0)
@@ -485,16 +520,28 @@ class GeoRideRevisionRequiseBinarySensor(_GeoRideAlerteBinarySensorBase):
 
     def __init__(self, entry, tracker, hass) -> None:
         super().__init__(entry, tracker, hass)
-        self._entity_km_restants = f"sensor.{self._slug}_entretien_revision_km_restants"
-        self._entity_jours_restants = f"sensor.{self._slug}_jours_restants_revision"
-        self._entity_seuil_km = f"number.{self._slug}_entretien_revision_seuil_alerte"
+        self._entity_km_restants: str | None = None
+        self._entity_jours_restants: str | None = None
+        self._entity_seuil_km: str | None = None
         self._attr_unique_id = f"{self.tracker_id}_revision_requise"
         self._attr_name = f"{self.tracker_name} Entretien Révision - Requise"
         self._attr_icon = "mdi:wrench-clock"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
 
+    def _resolve_entities(self) -> None:
+        from .helpers import resolve_entity_id
+        self._entity_km_restants = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "km_restants_revision"
+        )
+        self._entity_jours_restants = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, "jours_restants_revision"
+        )
+        self._entity_seuil_km = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "seuil_alerte_revision"
+        )
+
     def _watched_entities(self) -> list[str]:
-        return [self._entity_km_restants, self._entity_jours_restants, self._entity_seuil_km]
+        return [eid for eid in [self._entity_km_restants, self._entity_jours_restants, self._entity_seuil_km] if eid is not None]
 
     def _compute_is_on(self) -> bool:
         km_restants = self._get_float(self._entity_km_restants, 9999.0)

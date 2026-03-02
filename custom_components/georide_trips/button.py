@@ -49,23 +49,23 @@ async def async_setup_entry(
             GeoRideRecordMaintenanceButton(
                 hass, entry, tracker, "chaine",
                 icon="mdi:link-variant",
-                odometer_entity=f"sensor.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_odometer",
-                km_entity=f"number.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_entretien_chaine_km_au_dernier_entretien",
-                dt_entity=f"datetime.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_entretien_chaine_date_dernier_entretien",
+                odometer_key="real_odometer",
+                km_key="km_dernier_entretien_chaine",
+                dt_key="date_dernier_entretien_chaine",
             ),
             GeoRideRecordMaintenanceButton(
                 hass, entry, tracker, "vidange",
                 icon="mdi:oil",
-                odometer_entity=f"sensor.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_odometer",
-                km_entity=f"number.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_vidange_km_a_la_derniere_vidange",
-                dt_entity=f"datetime.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_vidange_date_derniere_vidange",
+                odometer_key="real_odometer",
+                km_key="km_dernier_entretien_vidange",
+                dt_key="date_dernier_entretien_vidange",
             ),
             GeoRideRecordMaintenanceButton(
                 hass, entry, tracker, "revision",
                 icon="mdi:wrench",
-                odometer_entity=f"sensor.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_odometer",
-                km_entity=f"number.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_revision_km_a_la_derniere_revision",
-                dt_entity=f"datetime.{tracker.get('trackerName', tracker_id).lower().replace(' ', '_')}_revision_date_derniere_revision",
+                odometer_key="real_odometer",
+                km_key="km_dernier_entretien_revision",
+                dt_key="date_dernier_entretien_revision",
             ),
         ])
 
@@ -153,18 +153,23 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
         tracker: dict,
         maintenance_type: str,
         icon: str,
-        odometer_entity: str,
-        km_entity: str,
-        dt_entity: str,
+        odometer_key: str,
+        km_key: str,
+        dt_key: str,
     ) -> None:
         """Initialize the maintenance record button."""
         self._hass = hass
         self._entry = entry
         self._tracker = tracker
         self._maintenance_type = maintenance_type
-        self._odometer_entity = odometer_entity
-        self._km_entity = km_entity
-        self._dt_entity = dt_entity
+        self._odometer_key = odometer_key
+        self._km_key = km_key
+        self._dt_key = dt_key
+
+        # Entity_id résolus dans async_added_to_hass
+        self._odometer_entity: str | None = None
+        self._km_entity: str | None = None
+        self._dt_entity: str | None = None
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
@@ -185,8 +190,30 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
             sw_version=str(self._tracker.get("softwareVersion", "")),
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Résoudre les entity_id via le registry."""
+        await super().async_added_to_hass()
+        from .helpers import resolve_entity_id
+        self._odometer_entity = resolve_entity_id(
+            self._hass, "sensor", self.tracker_id, self._odometer_key,
+        )
+        self._km_entity = resolve_entity_id(
+            self._hass, "number", self.tracker_id, self._km_key,
+        )
+        self._dt_entity = resolve_entity_id(
+            self._hass, "datetime", self.tracker_id, self._dt_key,
+        )
+
     async def async_press(self) -> None:
         """Record maintenance: snapshot odometer KM + current datetime."""
+        if not self._odometer_entity or not self._km_entity or not self._dt_entity:
+            _LOGGER.error(
+                "Cannot record %s for %s: entity_id not resolved (odometer=%s, km=%s, dt=%s)",
+                self._maintenance_type, self.tracker_name,
+                self._odometer_entity, self._km_entity, self._dt_entity,
+            )
+            return
+
         odometer_state = self._hass.states.get(self._odometer_entity)
         if odometer_state is None or odometer_state.state in ("unknown", "unavailable"):
             _LOGGER.warning(
@@ -219,21 +246,6 @@ class GeoRideRecordMaintenanceButton(ButtonEntity):
             {"entity_id": self._dt_entity, "datetime": now_str},
             blocking=True,
         )
-
-        # Désactivation du switch entretien correspondant
-        prefix = self.tracker_name.lower().replace(" ", "_")
-        switch_entity = f"switch.{prefix}_entretien_{self._maintenance_type}_a_faire"
-        switch_state = self._hass.states.get(switch_entity)
-        if switch_state and switch_state.state == "on":
-            await self._hass.services.async_call(
-                "switch", "turn_off",
-                {"entity_id": switch_entity},
-                blocking=True,
-            )
-            _LOGGER.info(
-                "Turned off maintenance switch '%s' for %s",
-                switch_entity, self.tracker_name,
-            )
 
         _LOGGER.info(
             "Recorded %s for %s: %.1f km on %s",
@@ -445,11 +457,13 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         - odometer_au_plein = odometer_actuel - distance_post_plein
         """
         from .const import METERS_TO_KM
+        from .helpers import resolve_entity_id
 
         plein_dt = self._get_datetime("plein_pending_at")
         km_dernier_plein = self._get_number("km_dernier_plein")
-        p = self._prefix
-        odometer_actuel = self._get_float(f"sensor.{p}_odometer")
+
+        odometer_entity = resolve_entity_id(self._hass, "sensor", self.tracker_id, "real_odometer")
+        odometer_actuel = self._get_float(odometer_entity) if odometer_entity else 0.0
 
         if plein_dt is None:
             _LOGGER.warning(
@@ -622,10 +636,18 @@ class GeoRideAppliquerAutonomieButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Copier autonomie_moyenne_calculee → autonomie_totale."""
-        p = self._prefix
-        entity_moyenne  = f"number.{p}_carburant_autonomie_moyenne_calculee"
-        entity_nb_pleins = f"number.{p}_carburant_nombre_de_pleins_enregistres"
-        entity_totale   = f"number.{p}_autonomie_totale"
+        from .helpers import resolve_entity_id
+
+        entity_moyenne   = resolve_entity_id(self._hass, "number", self.tracker_id, "autonomie_moyenne_calculee")
+        entity_nb_pleins = resolve_entity_id(self._hass, "number", self.tracker_id, "nb_pleins_enregistres")
+        entity_totale    = resolve_entity_id(self._hass, "number", self.tracker_id, "autonomie_totale")
+
+        if not entity_moyenne or not entity_nb_pleins or not entity_totale:
+            _LOGGER.error(
+                "%s: impossible de résoudre les entités carburant via le registry",
+                self.tracker_name,
+            )
+            return
 
         nb_pleins = self._get_float(entity_nb_pleins)
         moyenne   = self._get_float(entity_moyenne)

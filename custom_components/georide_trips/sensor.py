@@ -239,8 +239,9 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
-            from_date = datetime.now() - timedelta(days=self.trips_days_back)
-            to_date = datetime.now()
+            from datetime import timezone as tz
+            from_date = datetime.now(tz.utc) - timedelta(days=self.trips_days_back)
+            to_date = datetime.now(tz.utc)
 
             trips = await self.api.get_trips(self.tracker_id, from_date, to_date)
 
@@ -318,15 +319,16 @@ class GeoRideLifetimeTripsCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
+            from datetime import timezone as tz
             if self.activation_date:
                 try:
                     from_date = datetime.fromisoformat(self.activation_date.replace('Z', '+00:00'))
                 except Exception:
-                    from_date = datetime.now() - timedelta(days=1825)
+                    from_date = datetime.now(tz.utc) - timedelta(days=1825)
             else:
-                from_date = datetime.now() - timedelta(days=1825)
+                from_date = datetime.now(tz.utc) - timedelta(days=1825)
 
-            to_date = datetime.now()
+            to_date = datetime.now(tz.utc)
 
             _LOGGER.info(
                 "Fetching lifetime trips for %s from %s to %s",
@@ -422,12 +424,14 @@ class GeoRideMidnightSnapshotManager:
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
-        self._slug = self.tracker_name.lower().replace(" ", "_")
 
-        self._entity_debut_journee = f"number.{self._slug}_km_debut_journee"
-        self._entity_debut_semaine = f"number.{self._slug}_km_debut_semaine"
-        self._entity_debut_mois    = f"number.{self._slug}_km_debut_mois"
-        self._entity_jour_mensuel  = f"number.{self._slug}_jour_stats_mensuelles"
+        # Entity_id résolus au premier callback minuit (pas dans __init__
+        # car le registry n'est pas encore peuplé à ce stade du setup)
+        self._entity_debut_journee: str | None = None
+        self._entity_debut_semaine: str | None = None
+        self._entity_debut_mois: str | None = None
+        self._entity_jour_mensuel: str | None = None
+        self._entities_resolved = False
 
         self._unsub: callable | None = None
 
@@ -449,7 +453,9 @@ class GeoRideMidnightSnapshotManager:
             self._unsub()
             self._unsub = None
 
-    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
+        if entity_id is None:
+            return default
         state = self._hass.states.get(entity_id)
         if state and state.state not in (None, "unknown", "unavailable"):
             try:
@@ -458,8 +464,14 @@ class GeoRideMidnightSnapshotManager:
                 pass
         return default
 
-    def _set_number(self, entity_id: str, value: float) -> None:
+    def _set_number(self, entity_id: str | None, value: float) -> None:
         """Mettre à jour un number via hass.services.async_call."""
+        if entity_id is None:
+            _LOGGER.warning(
+                "MidnightSnapshotManager %s: entity_id None, impossible de set value %.2f",
+                self.tracker_name, value,
+            )
+            return
         self._hass.async_create_task(
             self._hass.services.async_call(
                 "number",
@@ -472,6 +484,23 @@ class GeoRideMidnightSnapshotManager:
     @callback
     def _midnight_callback(self, now) -> None:
         """Appelé à minuit : mettre à jour les snapshots odometer."""
+        # Résolution lazy des entity_id (le registry est peuplé après le setup)
+        if not self._entities_resolved:
+            from .helpers import resolve_entity_id
+            self._entity_debut_journee = resolve_entity_id(
+                self._hass, "number", self.tracker_id, "km_debut_journee"
+            )
+            self._entity_debut_semaine = resolve_entity_id(
+                self._hass, "number", self.tracker_id, "km_debut_semaine"
+            )
+            self._entity_debut_mois = resolve_entity_id(
+                self._hass, "number", self.tracker_id, "km_debut_mois"
+            )
+            self._entity_jour_mensuel = resolve_entity_id(
+                self._hass, "number", self.tracker_id, "jour_stats_mensuelles"
+            )
+            self._entities_resolved = True
+
         odometer_km = self._odometer_sensor.native_value
         if odometer_km is None:
             _LOGGER.warning(
@@ -584,7 +613,9 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
         self._recalculate()
         self.async_write_ha_state()
 
-    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
+        if entity_id is None:
+            return default
         state = self._hass.states.get(entity_id)
         if state and state.state not in (None, "unknown", "unavailable"):
             try:
@@ -878,7 +909,7 @@ class GeoRideLifetimeOdometerSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:counter"
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_device_class = SensorDeviceClass.DISTANCE
-        self._attr_state_class = "total_increasing"
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -982,13 +1013,21 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:counter"
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_device_class = SensorDeviceClass.DISTANCE
-        self._attr_state_class = "total_increasing"
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
         # Guard anti-régression : mémorise le dernier tracker_km valide (base + delta)
         # pour rejeter les mises à jour partielles inférieures à la valeur connue.
         self._last_known_tracker_km: float | None = None
+        # Entity_id de l'offset — résolu dans async_added_to_hass via le registry
+        self._offset_entity_id: str | None = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+
+        # Résoudre l'entity_id de l'offset via le registry
+        from .helpers import resolve_entity_id
+        self._offset_entity_id = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "odometer_offset"
+        )
 
         # S'abonner aux updates du coordinator récent pour les trajets intra-journaliers
         self.async_on_remove(
@@ -999,21 +1038,22 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
         # S'abonner aux changements de l'offset
         from homeassistant.helpers.event import async_track_state_change_event
-        offset_entity_id = f"number.{self.tracker_name.lower().replace(' ', '_')}_odometer_offset"
-        self.async_on_remove(
-            async_track_state_change_event(
-                self._hass,
-                [offset_entity_id],
-                self._handle_offset_state_change,
+        if self._offset_entity_id:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self._hass,
+                    [self._offset_entity_id],
+                    self._handle_offset_state_change,
+                )
             )
-        )
 
     @callback
     def _handle_recent_coordinator_update(self) -> None:
         """Déclenché à chaque update du coordinator récent (~ toutes les 1h)."""
         self.async_write_ha_state()
 
-    async def _handle_offset_state_change(self, event) -> None:
+    @callback
+    def _handle_offset_state_change(self, event) -> None:
         self.async_write_ha_state()
 
     def _compute_tracker_km(self) -> tuple[float, float, str]:
@@ -1082,9 +1122,10 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         return base_km, delta_km, last_lifetime_date
 
     def _get_offset_km(self) -> float:
-        offset_entity_id = f"number.{self.tracker_name.lower().replace(' ', '_')}_odometer_offset"
-        offset = self._hass.states.get(offset_entity_id)
-        return float(offset.state) if offset and offset.state not in ("unknown", "unavailable") else 0
+        if not self._offset_entity_id:
+            return 0.0
+        offset = self._hass.states.get(self._offset_entity_id)
+        return float(offset.state) if offset and offset.state not in (None, "unknown", "unavailable") else 0
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -1106,7 +1147,7 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self):
         base_km, delta_km, last_lifetime_date = self._compute_tracker_km_guarded()
         offset_km = self._get_offset_km()
-        offset_entity_id = f"number.{self.tracker_name.lower().replace(' ', '_')}_odometer_offset"
+        offset_entity_id = self._offset_entity_id or "unknown"
 
         lifetime_data = self.coordinator.data
         lifetime_trips = lifetime_data.get("trips", []) if lifetime_data else []
@@ -1146,11 +1187,13 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         base_km, delta_km, _ = self._compute_tracker_km()
         tracker_km = base_km + delta_km
         offset_km = value - tracker_km
-        offset_entity_id = f"number.{self.tracker_name.lower().replace(' ', '_')}_odometer_offset"
+        if not self._offset_entity_id:
+            _LOGGER.error("Cannot set odometer for %s: offset entity_id not resolved", self.tracker_name)
+            return
         self._hass.async_create_task(
             self._hass.services.async_call(
                 "number", "set_value",
-                {"entity_id": offset_entity_id, "value": offset_km},
+                {"entity_id": self._offset_entity_id, "value": offset_km},
             )
         )
         # Mettre à jour le guard avec la nouvelle valeur tracker_km réelle
@@ -1170,8 +1213,10 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
     """Sensor autonomie restante, mis à jour à chaque changement d'odometer.
 
     Calcul :
-      - Si nb_pleins_enregistres >= 2 : utilise autonomie_moyenne_calculee
-      - Sinon                         : utilise autonomie_totale (saisie manuelle)
+      - autonomie_totale est la référence unique.
+      - La moyenne calculée (autonomie_moyenne_calculee) est proposée au choix
+        via le bouton button.<moto>_appliquer_autonomie_calculee et la notification
+        blueprint — elle ne s'applique pas automatiquement.
 
       km_restants = autonomie_ref - (odometer_actuel - km_dernier_plein)
       (plancher à 0)
@@ -1193,12 +1238,11 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
 
-        slug = self.tracker_name.lower().replace(" ", "_")
-        # Les slugs HA sont dérivés du name complet incluant le préfixe "Carburant - "
-        self._entity_km_dernier_plein  = f"number.{slug}_km_au_dernier_plein"
-        self._entity_autonomie_totale  = f"number.{slug}_autonomie_totale"
-        self._entity_autonomie_moyenne = f"number.{slug}_carburant_autonomie_moyenne_calculee"
-        self._entity_nb_pleins         = f"number.{slug}_carburant_nombre_de_pleins_enregistres"
+        # Les entity_id seront résolus dans async_added_to_hass via le registry
+        self._entity_km_dernier_plein: str | None = None
+        self._entity_autonomie_totale: str | None = None
+        self._entity_autonomie_moyenne: str | None = None
+        self._entity_nb_pleins: str | None = None
 
         self._attr_unique_id = f"{self.tracker_id}_autonomie_restante"
         self._attr_name = f"{self.tracker_name} Autonomie restante"
@@ -1228,14 +1272,40 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     pass
 
+        # Résolution des entity_id via le registry (fiable, indépendant du slug)
+        from .helpers import resolve_entity_id
+        self._entity_km_dernier_plein = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "km_dernier_plein"
+        )
+        self._entity_autonomie_totale = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "autonomie_totale"
+        )
+        self._entity_autonomie_moyenne = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "autonomie_moyenne_calculee"
+        )
+        self._entity_nb_pleins = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "nb_pleins_enregistres"
+        )
+
+        if not self._entity_km_dernier_plein or not self._entity_autonomie_totale:
+            _LOGGER.warning(
+                "Autonomie %s: entity_id non résolus (km_dernier_plein=%s, autonomie_totale=%s). "
+                "Les number entities sont-elles créées ?",
+                self.tracker_name,
+                self._entity_km_dernier_plein,
+                self._entity_autonomie_totale,
+            )
+
         from homeassistant.helpers.event import async_track_state_change_event
 
         watched = [
-            self._odometer_sensor.entity_id,
-            self._entity_km_dernier_plein,
-            self._entity_autonomie_totale,
-            self._entity_autonomie_moyenne,
-            self._entity_nb_pleins,
+            eid for eid in [
+                self._odometer_sensor.entity_id,
+                self._entity_km_dernier_plein,
+                self._entity_autonomie_totale,
+                self._entity_autonomie_moyenne,
+                self._entity_nb_pleins,
+            ] if eid is not None
         ]
 
         self.async_on_remove(
@@ -1254,7 +1324,9 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         self._recalculate()
         self.async_write_ha_state()
 
-    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
+        if entity_id is None:
+            return default
         state = self._hass.states.get(entity_id)
         if state and state.state not in (None, "unknown", "unavailable"):
             try:
@@ -1268,10 +1340,6 @@ class GeoRideAutonomySensor(SensorEntity, RestoreEntity):
         km_dernier_plein = self._get_float(self._entity_km_dernier_plein)
         autonomie_totale = self._get_float(self._entity_autonomie_totale, 150.0)
 
-        # autonomie_totale est la référence unique.
-        # La moyenne calculée (autonomie_moyenne_calculee) est proposée au choix
-        # via le bouton button.<moto>_appliquer_autonomie_calculee et la notification
-        # blueprint — elle ne s'applique pas automatiquement.
         km_parcourus = max(odometer_km - km_dernier_plein, 0.0)
         km_restants  = max(autonomie_totale - km_parcourus, 0.0)
 
@@ -1309,8 +1377,8 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
 
     S'abonne à :
       - sensor.<moto>_odometer  (via référence directe à GeoRideRealOdometerSensor)
-      - number.<moto>_<intervalle_key>
-      - number.<moto>_<km_dernier_key>
+      - number.<moto>_<intervalle_key>  (résolu via entity registry)
+      - number.<moto>_<km_dernier_key>  (résolu via entity registry)
     """
 
     def __init__(
@@ -1322,15 +1390,19 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
         unique_id_suffix: str,
         name_suffix: str,
         icon: str,
-        intervalle_entity: str,
-        km_dernier_entity: str,
+        intervalle_key: str,
+        km_dernier_key: str,
     ) -> None:
         self._entry = entry
         self._tracker = tracker
         self._hass = hass
         self._odometer_sensor = odometer_sensor
-        self._entity_intervalle = intervalle_entity
-        self._entity_km_dernier = km_dernier_entity
+        self._intervalle_key = intervalle_key
+        self._km_dernier_key = km_dernier_key
+
+        # Entity_id résolus dans async_added_to_hass
+        self._entity_intervalle: str | None = None
+        self._entity_km_dernier: str | None = None
 
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
@@ -1363,12 +1435,23 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     pass
 
+        # Résolution des entity_id via le registry
+        from .helpers import resolve_entity_id
+        self._entity_intervalle = resolve_entity_id(
+            self._hass, "number", self.tracker_id, self._intervalle_key,
+        )
+        self._entity_km_dernier = resolve_entity_id(
+            self._hass, "number", self.tracker_id, self._km_dernier_key,
+        )
+
         from homeassistant.helpers.event import async_track_state_change_event
 
         watched = [
-            self._odometer_sensor.entity_id,
-            self._entity_intervalle,
-            self._entity_km_dernier,
+            eid for eid in [
+                self._odometer_sensor.entity_id,
+                self._entity_intervalle,
+                self._entity_km_dernier,
+            ] if eid is not None
         ]
         self.async_on_remove(
             async_track_state_change_event(
@@ -1382,7 +1465,9 @@ class _GeoRideEntretienKmBase(SensorEntity, RestoreEntity):
         self._recalculate()
         self.async_write_ha_state()
 
-    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
+        if entity_id is None:
+            return default
         state = self._hass.states.get(entity_id)
         if state and state.state not in (None, "unknown", "unavailable"):
             try:
@@ -1422,7 +1507,6 @@ class GeoRideKmRestantsChaineSensor(_GeoRideEntretienKmBase):
     """Sensor km restants avant entretien chaîne."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}").lower().replace(" ", "_")
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -1431,8 +1515,8 @@ class GeoRideKmRestantsChaineSensor(_GeoRideEntretienKmBase):
             unique_id_suffix="km_restants_chaine",
             name_suffix="Entretien Chaîne - KM restants",
             icon="mdi:link-variant",
-            intervalle_entity=f"number.{slug}_entretien_chaine_intervalle_km",
-            km_dernier_entity=f"number.{slug}_entretien_chaine_km_au_dernier_entretien",
+            intervalle_key="intervalle_km_chaine",
+            km_dernier_key="km_dernier_entretien_chaine",
         )
 
 
@@ -1440,7 +1524,6 @@ class GeoRideKmRestantsVidangeSensor(_GeoRideEntretienKmBase):
     """Sensor km restants avant vidange."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}").lower().replace(" ", "_")
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -1449,8 +1532,8 @@ class GeoRideKmRestantsVidangeSensor(_GeoRideEntretienKmBase):
             unique_id_suffix="km_restants_vidange",
             name_suffix="Entretien Vidange - KM restants",
             icon="mdi:oil",
-            intervalle_entity=f"number.{slug}_vidange_intervalle_km",
-            km_dernier_entity=f"number.{slug}_vidange_km_a_la_derniere_vidange",
+            intervalle_key="intervalle_km_vidange",
+            km_dernier_key="km_dernier_entretien_vidange",
         )
 
 
@@ -1458,7 +1541,6 @@ class GeoRideKmRestantsRevisionSensor(_GeoRideEntretienKmBase):
     """Sensor km restants avant révision."""
 
     def __init__(self, entry, tracker, hass, odometer_sensor) -> None:
-        slug = tracker.get("trackerName", f"Tracker {tracker.get('trackerId')}").lower().replace(" ", "_")
         super().__init__(
             entry=entry,
             tracker=tracker,
@@ -1467,8 +1549,8 @@ class GeoRideKmRestantsRevisionSensor(_GeoRideEntretienKmBase):
             unique_id_suffix="km_restants_revision",
             name_suffix="Entretien Révision - KM restants",
             icon="mdi:wrench",
-            intervalle_entity=f"number.{slug}_revision_intervalle_km",
-            km_dernier_entity=f"number.{slug}_revision_km_a_la_derniere_revision",
+            intervalle_key="intervalle_km_revision",
+            km_dernier_key="km_dernier_entretien_revision",
         )
 
 
@@ -1492,9 +1574,9 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
         self.tracker_id = str(tracker.get("trackerId"))
         self.tracker_name = tracker.get("trackerName", f"Tracker {self.tracker_id}")
 
-        slug = self.tracker_name.lower().replace(" ", "_")
-        self._entity_date_dernier  = f"datetime.{slug}_revision_date_derniere_revision"
-        self._entity_intervalle_j  = f"number.{slug}_revision_intervalle_jours"
+        # Entity_id résolus dans async_added_to_hass
+        self._entity_date_dernier: str | None = None
+        self._entity_intervalle_j: str | None = None
 
         self._attr_unique_id = f"{self.tracker_id}_jours_restants_revision"
         self._attr_name = f"{self.tracker_name} Entretien Révision - Jours restants"
@@ -1524,9 +1606,18 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     pass
 
+        # Résolution des entity_id via le registry
+        from .helpers import resolve_entity_id
+        self._entity_date_dernier = resolve_entity_id(
+            self._hass, "datetime", self.tracker_id, "date_dernier_entretien_revision",
+        )
+        self._entity_intervalle_j = resolve_entity_id(
+            self._hass, "number", self.tracker_id, "intervalle_jours_revision",
+        )
+
         from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
 
-        watched = [self._entity_date_dernier, self._entity_intervalle_j]
+        watched = [eid for eid in [self._entity_date_dernier, self._entity_intervalle_j] if eid is not None]
         self.async_on_remove(
             async_track_state_change_event(
                 self._hass, watched, self._handle_state_change,
@@ -1551,7 +1642,9 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
         self._recalculate()
         self.async_write_ha_state()
 
-    def _get_float(self, entity_id: str, default: float = 0.0) -> float:
+    def _get_float(self, entity_id: str | None, default: float = 0.0) -> float:
+        if entity_id is None:
+            return default
         state = self._hass.states.get(entity_id)
         if state and state.state not in (None, "unknown", "unavailable"):
             try:
@@ -1564,6 +1657,9 @@ class GeoRideJoursRestantsRevisionSensor(SensorEntity, RestoreEntity):
         intervalle_j = self._get_float(self._entity_intervalle_j, 0.0)
 
         # Lire la date du dernier entretien depuis l'entité datetime
+        if self._entity_date_dernier is None:
+            self._attr_native_value = 0.0
+            return
         dt_state = self._hass.states.get(self._entity_date_dernier)
         if dt_state is None or dt_state.state in (None, "unknown", "unavailable"):
             self._attr_native_value = 0.0
