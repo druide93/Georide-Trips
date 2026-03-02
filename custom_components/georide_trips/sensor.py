@@ -125,11 +125,13 @@ class GeoRideTripsCoordinator(DataUpdateCoordinator):
         self._status_coordinator = None
         self._last_locked_state: bool | None = None
 
+        # Pas de polling automatique — refresh uniquement sur verrouillage du tracker
+        # (via StatusCoordinator) ou manuellement. Le scan_interval est ignoré.
         super().__init__(
             hass,
             _LOGGER,
             name=f"GeoRide Trips {tracker_name}",
-            update_interval=timedelta(seconds=scan_interval),
+            update_interval=None,
         )
 
     def on_new_trip(self, callback) -> callable:
@@ -981,6 +983,9 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
         self._attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
         self._attr_device_class = SensorDeviceClass.DISTANCE
         self._attr_state_class = "total_increasing"
+        # Guard anti-régression : mémorise le dernier tracker_km valide (base + delta)
+        # pour rejeter les mises à jour partielles inférieures à la valeur connue.
+        self._last_known_tracker_km: float | None = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -1050,6 +1055,32 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
         return base_km, delta_km, last_lifetime_date
 
+    def _compute_tracker_km_guarded(self) -> tuple[float, float, str]:
+        """Comme _compute_tracker_km mais avec guard anti-régression.
+
+        Si le tracker_km calculé (base + delta) est inférieur à la dernière
+        valeur connue, on conserve l'ancienne valeur en forçant delta_km à la
+        différence. Cela évite qu'un refresh partiel en milieu de trajet fasse
+        régresser l'odometer.
+
+        Returns:
+            (base_km, delta_km, last_lifetime_trip_date)
+        """
+        base_km, delta_km, last_lifetime_date = self._compute_tracker_km()
+        new_tracker_km = base_km + delta_km
+
+        if self._last_known_tracker_km is not None and new_tracker_km < self._last_known_tracker_km:
+            _LOGGER.warning(
+                "Odometer guard %s: régression détectée (%.1f km → %.1f km), valeur maintenue à %.1f km",
+                self.tracker_name, self._last_known_tracker_km, new_tracker_km, self._last_known_tracker_km,
+            )
+            # Forcer delta pour maintenir la valeur connue
+            delta_km = self._last_known_tracker_km - base_km
+        else:
+            self._last_known_tracker_km = new_tracker_km
+
+        return base_km, delta_km, last_lifetime_date
+
     def _get_offset_km(self) -> float:
         offset_entity_id = f"number.{self.tracker_name.lower().replace(' ', '_')}_odometer_offset"
         offset = self._hass.states.get(offset_entity_id)
@@ -1067,13 +1098,13 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        base_km, delta_km, _ = self._compute_tracker_km()
+        base_km, delta_km, _ = self._compute_tracker_km_guarded()
         offset_km = self._get_offset_km()
         return round(base_km + delta_km + offset_km, 2)
 
     @property
     def extra_state_attributes(self):
-        base_km, delta_km, last_lifetime_date = self._compute_tracker_km()
+        base_km, delta_km, last_lifetime_date = self._compute_tracker_km_guarded()
         offset_km = self._get_offset_km()
         offset_entity_id = f"number.{self.tracker_name.lower().replace(' ', '_')}_odometer_offset"
 
@@ -1122,6 +1153,8 @@ class GeoRideRealOdometerSensor(CoordinatorEntity, SensorEntity):
                 {"entity_id": offset_entity_id, "value": offset_km},
             )
         )
+        # Mettre à jour le guard avec la nouvelle valeur tracker_km réelle
+        self._last_known_tracker_km = tracker_km
         _LOGGER.info(
             "Odometer set for %s: %.1f km (base=%.1f km, delta=%.1f km, offset=%.1f km)",
             self.tracker_name, value, base_km, delta_km, offset_km
