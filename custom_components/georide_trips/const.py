@@ -25,6 +25,7 @@ CONF_TRIPS_DAYS_BACK = "trips_days_back"
 CONF_SOCKETIO_ENABLED = "socketio_enabled"
 CONF_TRACKER_SCAN_INTERVAL = "tracker_scan_interval"
 CONF_GPS_MIN_ACCURACY = "gps_min_accuracy"
+CONF_GPS_MIN_DISTANCE = "gps_min_distance"
 
 # Default values
 DEFAULT_SCAN_INTERVAL = 3600            # 1 heure
@@ -33,6 +34,7 @@ DEFAULT_TRIPS_DAYS_BACK = 30
 DEFAULT_SOCKETIO_ENABLED = True
 DEFAULT_TRACKER_SCAN_INTERVAL = 300     # 5 minutes
 DEFAULT_GPS_MIN_ACCURACY = 0            # 0 = désactivé (aucun filtre)
+DEFAULT_GPS_MIN_DISTANCE = 10           # 10 mètres (0 = désactivé)
 
 # Service attributes
 ATTR_TRACKER_ID = "tracker_id"

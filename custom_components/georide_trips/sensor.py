@@ -401,8 +401,8 @@ class GeoRideMidnightSnapshotManager:
     Remplace le trigger 'minuit' du blueprint : à 00:00:00 chaque nuit,
     met à jour les number.km_debut_journee/semaine/mois directement en Python.
 
-    Le jour de reset mensuel est lu depuis number.<slug>_jour_stats_mensuelles
-    (configurable par l'utilisateur via l'UI, défaut = 1).
+    Le reset mensuel est fixé au 1er du mois. Le bilan mensuel est envoyé
+    par le blueprint le dernier jour du mois (avant le reset).
 
     Usage :
         manager = GeoRideMidnightSnapshotManager(hass, entry, tracker, odometer_sensor)
@@ -430,7 +430,6 @@ class GeoRideMidnightSnapshotManager:
         self._entity_debut_journee: str | None = None
         self._entity_debut_semaine: str | None = None
         self._entity_debut_mois: str | None = None
-        self._entity_jour_mensuel: str | None = None
         self._entities_resolved = False
 
         self._unsub: callable | None = None
@@ -496,9 +495,6 @@ class GeoRideMidnightSnapshotManager:
             self._entity_debut_mois = resolve_entity_id(
                 self._hass, "number", self.tracker_id, "km_debut_mois"
             )
-            self._entity_jour_mensuel = resolve_entity_id(
-                self._hass, "number", self.tracker_id, "jour_stats_mensuelles"
-            )
             self._entities_resolved = True
 
         odometer_km = self._odometer_sensor.native_value
@@ -524,13 +520,12 @@ class GeoRideMidnightSnapshotManager:
                 self.tracker_name, odometer_km,
             )
 
-        # Snapshot mensuel — au jour configuré (number.*_jour_stats_mensuelles)
-        jour_mensuel = int(self._get_float(self._entity_jour_mensuel, 1.0))
-        if now.day == jour_mensuel:
+        # Snapshot mensuel — le 1er du mois à minuit
+        if now.day == 1:
             self._set_number(self._entity_debut_mois, odometer_km)
             _LOGGER.info(
-                "MidnightSnapshotManager %s: km_debut_mois = %.1f km (jour %d)",
-                self.tracker_name, odometer_km, jour_mensuel,
+                "MidnightSnapshotManager %s: km_debut_mois = %.1f km (1er du mois)",
+                self.tracker_name, odometer_km,
             )
 
 

@@ -15,12 +15,14 @@ from .const import (
     CONF_SOCKETIO_ENABLED,
     CONF_TRACKER_SCAN_INTERVAL,
     CONF_GPS_MIN_ACCURACY,
+    CONF_GPS_MIN_DISTANCE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_LIFETIME_SCAN_INTERVAL,
     DEFAULT_TRIPS_DAYS_BACK,
     DEFAULT_SOCKETIO_ENABLED,
     DEFAULT_TRACKER_SCAN_INTERVAL,
     DEFAULT_GPS_MIN_ACCURACY,
+    DEFAULT_GPS_MIN_DISTANCE,
 )
 from .api import GeoRideTripsAPI
 
@@ -125,6 +127,9 @@ class GeoRideTripsOptionsFlow(config_entries.OptionsFlow):
         current_gps_accuracy = self.config_entry.options.get(
             CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY
         )
+        current_gps_min_distance = self.config_entry.options.get(
+            CONF_GPS_MIN_DISTANCE, DEFAULT_GPS_MIN_DISTANCE
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -159,6 +164,11 @@ class GeoRideTripsOptionsFlow(config_entries.OptionsFlow):
                         CONF_GPS_MIN_ACCURACY,
                         default=current_gps_accuracy,
                     ): vol.All(vol.Coerce(int), vol.Range(min=0, max=10000)),
+
+                    vol.Optional(
+                        CONF_GPS_MIN_DISTANCE,
+                        default=current_gps_min_distance,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=500)),
                 }
             )
         )

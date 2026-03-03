@@ -30,7 +30,8 @@
           "scan_interval": "Intervalle trajets récents (secondes)",
           "lifetime_scan_interval": "Intervalle kilométrage total (secondes)",
           "trips_days_back": "Jours d'historique",
-          "gps_min_accuracy": "Précision GPS minimale (mètres, 0 = désactivé)"
+          "gps_min_accuracy": "Précision GPS minimale (mètres, 0 = désactivé)",
+          "gps_min_distance": "Distance GPS minimale entre positions (mètres, 0 = désactivé)"
         },
         "data_description": {
           "socketio_enabled": "Active la position GPS en temps réel, la détection de mouvement, et les alertes (vol, chute). Nécessite python-socketio installé.",
@@ -38,7 +39,8 @@
           "scan_interval": "Fréquence de mise à jour des trajets récents. Minimum 300s (5 min), défaut 3600s (1h).",
           "lifetime_scan_interval": "Fréquence de mise à jour du kilométrage total. Minimum 3600s (1h), défaut 86400s (24h).",
           "trips_days_back": "Nombre de jours à récupérer pour les trajets récents. Défaut : 30 jours.",
-          "gps_min_accuracy": "Rayon de précision GPS maximum accepté en mètres. Les positions avec un radius supérieur sont ignorées. 0 = désactivé (toutes les positions acceptées). Exemple : 50 = ignorer les positions avec précision > 50m."
+          "gps_min_accuracy": "Rayon de précision GPS maximum accepté en mètres. Les positions avec un radius supérieur sont ignorées. 0 = désactivé (toutes les positions acceptées). Exemple : 50 = ignorer les positions avec précision > 50m.",
+          "gps_min_distance": "Distance minimale en mètres entre deux positions enregistrées. Les positions plus proches sont ignorées pour filtrer les micro-dérives GPS. 0 = désactivé. Recommandé : 10m."
         }
       }
     }

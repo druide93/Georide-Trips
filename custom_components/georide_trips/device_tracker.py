@@ -4,8 +4,15 @@ Entité device_tracker rattachée au device de chaque moto :
 - Position GPS en temps réel via événements Socket.IO (event "position")
 - Fallback : récupération initiale via API REST au démarrage
 - Pas de polling : les mises à jour arrivent dès que GeoRide envoie une position
+
+Filtres appliqués sur les événements Socket.IO :
+- Précision GPS (radius) : positions trop imprécises ignorées entièrement
+- Statut moving=False : attributs mis à jour en mémoire, état HA NON écrit
+  → pas d'entrée recorder quand la moto est à l'arrêt → plus de traits parasites
+- Distance minimale : micro-dérives GPS ignorées (seuil configurable, défaut 10m)
 """
 import logging
+import math
 
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
@@ -15,9 +22,25 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import GeoRideTripsAPI
-from .const import DOMAIN, CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY
+from .const import (
+    DOMAIN,
+    CONF_GPS_MIN_ACCURACY,
+    DEFAULT_GPS_MIN_ACCURACY,
+    CONF_GPS_MIN_DISTANCE,
+    DEFAULT_GPS_MIN_DISTANCE,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calcule la distance en mètres entre deux coordonnées GPS (formule Haversine)."""
+    R = 6_371_000  # rayon terrestre en mètres
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 async def async_setup_entry(
@@ -45,6 +68,12 @@ class GeoRidePositionTracker(TrackerEntity):
 
     Mises à jour via Socket.IO event "position" — temps réel, sans polling.
     Fallback initial via API REST pour avoir une position dès le démarrage.
+
+    Filtres actifs (dans l'ordre d'application) :
+    1. Précision GPS (radius > seuil) → ignoré entièrement
+    2. moving=False → attributs mis à jour en mémoire, état HA NON écrit
+    3. Distance < seuil_min → micro-dérive ignorée, état HA NON écrit
+    4. Sinon → async_write_ha_state() → entrée recorder
     """
 
     def __init__(
@@ -164,7 +193,16 @@ class GeoRidePositionTracker(TrackerEntity):
 
     @callback
     def _handle_position_event(self, data: dict) -> None:
-        """Reçoit un événement 'position' depuis Socket.IO et met à jour l'état."""
+        """Reçoit un événement 'position' depuis Socket.IO et met à jour l'état.
+
+        Logique de filtrage (dans l'ordre) :
+        1. lat/lon manquants → ignoré
+        2. Précision GPS insuffisante → ignoré entièrement
+        3. moving=False → attributs mis à jour en mémoire, état HA NON écrit
+           (pas d'entrée recorder → pas de traits parasites sur la carte)
+        4. Distance < seuil_min → micro-dérive ignorée, état HA NON écrit
+        5. Sinon → async_write_ha_state() → entrée recorder
+        """
         _LOGGER.debug("Position Socket.IO pour %s : %s", self._tracker_name, data)
 
         lat = data.get("latitude")
@@ -173,7 +211,7 @@ class GeoRidePositionTracker(TrackerEntity):
             _LOGGER.warning("Événement position sans lat/lon pour %s : %s", self._tracker_name, data)
             return
 
-        # ── Filtre de précision GPS ──────────────────────────────────────────
+        # ── 1. Filtre précision GPS ──────────────────────────────────────────
         accuracy = int(data.get("radius", 0) or 0)
         min_accuracy = self._entry.options.get(CONF_GPS_MIN_ACCURACY, DEFAULT_GPS_MIN_ACCURACY)
         if min_accuracy > 0 and accuracy > min_accuracy:
@@ -183,19 +221,56 @@ class GeoRidePositionTracker(TrackerEntity):
             )
             return
 
-        self._latitude = float(lat)
-        self._longitude = float(lon)
+        lat = float(lat)
+        lon = float(lon)
+        is_moving = bool(data.get("moving", False))
+
+        # ── 2. Filtre moving=False ───────────────────────────────────────────
+        # Les attributs en mémoire sont mis à jour (speed, heading, fix_time…)
+        # mais async_write_ha_state() n'est PAS appelé → aucune entrée recorder
+        # → pas de point sur la carte → pas de trait parasite entre sessions.
+        if not is_moving:
+            self._gps_accuracy = accuracy
+            self._fix_time = data.get("fixtime") or data.get("fixTime")
+            self._speed = data.get("speed")
+            self._heading = data.get("heading")
+            self._altitude = data.get("altitude")
+            self._is_moving = False
+            _LOGGER.debug(
+                "Position non enregistrée pour %s : tracker à l'arrêt (moving=False)",
+                self._tracker_name,
+            )
+            return
+
+        # ── 3. Filtre distance minimale (anti micro-dérive) ──────────────────
+        min_distance = self._entry.options.get(CONF_GPS_MIN_DISTANCE, DEFAULT_GPS_MIN_DISTANCE)
+        if (
+            min_distance > 0
+            and self._latitude is not None
+            and self._longitude is not None
+        ):
+            distance_m = _haversine_distance(self._latitude, self._longitude, lat, lon)
+            if distance_m < min_distance:
+                _LOGGER.debug(
+                    "Position ignorée pour %s : déplacement trop faible (%.1fm < seuil=%dm)",
+                    self._tracker_name, distance_m, min_distance,
+                )
+                return
+
+        # ── 4. Mise à jour complète ──────────────────────────────────────────
+        self._latitude = lat
+        self._longitude = lon
         self._gps_accuracy = accuracy
         self._fix_time = data.get("fixtime") or data.get("fixTime")
         self._speed = data.get("speed")
         self._heading = data.get("heading")
         self._altitude = data.get("altitude")
-        self._is_moving = bool(data.get("moving", False))
+        self._is_moving = True
 
         self.async_write_ha_state()
         _LOGGER.debug(
-            "Position mise à jour pour %s : lat=%.5f lon=%.5f moving=%s",
-            self._tracker_name, self._latitude, self._longitude, self._is_moving,
+            "Position mise à jour pour %s : lat=%.5f lon=%.5f moving=True",
+            self._tracker_name, self._latitude, self._longitude,
         )
 
     # ── Fallback API REST ────────────────────────────────────────────────────
