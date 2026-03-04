@@ -453,6 +453,7 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         Logique :
         - plein_pending_at  = horodatage du plein (datetime UTC)
+        - Refresh du coordinator pour s'assurer que l'odometer HA intègre le trajet
         - Appel API get_trips(plein_pending_at → now) → distance parcourue APRÈS le plein
         - odometer_au_plein = odometer_actuel - distance_post_plein
         """
@@ -461,6 +462,15 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
 
         plein_dt = self._get_datetime("plein_pending_at")
         km_dernier_plein = self._get_number("km_dernier_plein")
+
+        # ── Refresh coordinator pour garantir que l'odometer est à jour ───────
+        # Sans ce refresh, le trajet venant de se terminer n'est pas encore intégré
+        # dans sensor.real_odometer, ce qui fausserait le calcul odometer_au_plein.
+        _LOGGER.debug(
+            "%s: refresh coordinator avant lecture odometer (garantir intégration du trajet)",
+            self.tracker_name,
+        )
+        await self._coordinator.async_request_refresh()
 
         odometer_entity = resolve_entity_id(self._hass, "sensor", self.tracker_id, "real_odometer")
         odometer_actuel = self._get_float(odometer_entity) if odometer_entity else 0.0
