@@ -1,6 +1,6 @@
 # 🏍️ GeoRide Trips — Intégration Home Assistant
 
-[![Version](https://img.shields.io/badge/version-2.3-blue.svg)](https://github.com/druide93/Georide-Trips)
+[![Version](https://img.shields.io/badge/version-2.4.1-blue.svg)](https://github.com/druide93/Georide-Trips)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1+-green.svg)](https://www.home-assistant.io/)
 
@@ -361,5 +361,6 @@ MIT License — Voir [LICENSE](LICENSE) pour les détails.
 ## 🤝 Contribution
 
 Les issues et pull requests sont les bienvenus sur [GitHub](https://github.com/druide93/Georide-Trips).
+
 
 > **Note** : Ce projet n'est pas affilié à GeoRide. GeoRide est une marque déposée de GeoRide SAS.
