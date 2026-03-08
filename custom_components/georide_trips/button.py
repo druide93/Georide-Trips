@@ -401,20 +401,63 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
             self._unregister_stop_cb = None
 
     async def async_added_to_hass(self) -> None:
-        """Au démarrage, reset plein_pending_at si non-null (redémarrage HA détecté)."""
+        """Au démarrage, traiter ou réinscrire un plein en attente s'il existe."""
         await super().async_added_to_hass()
         plein_pending = self._get_datetime("plein_pending_at")
         if plein_pending is not None:
-            _LOGGER.warning(
-                "%s: plein_pending_at non-null au démarrage (%s) — reset (redémarrage HA détecté)",
-                self.tracker_name, plein_pending.isoformat(),
-            )
-            await self._set_datetime("plein_pending_at", None)
+            if self._is_tracker_locked():
+                # Tracker verrouillé → le trajet post-plein est terminé, on peut calculer
+                _LOGGER.info(
+                    "%s: plein_pending_at non-null au démarrage (%s) et tracker verrouillé "
+                    "— tentative de calcul différé",
+                    self.tracker_name, plein_pending.isoformat(),
+                )
+                self._hass.async_create_task(self._compute_and_record_plein())
+            else:
+                # Tracker déverrouillé → en cours de trajet, réinscrire le callback
+                _LOGGER.info(
+                    "%s: plein_pending_at non-null au démarrage (%s) et tracker déverrouillé "
+                    "— réinscription attente verrouillage",
+                    self.tracker_name, plein_pending.isoformat(),
+                )
+                self._unregister_stop_cb = self._coordinator.on_stop_confirmed(
+                    self._on_stop_confirmed_for_plein
+                )
+
+    # ── Helpers lock state ──────────────────────────────────────────────────
+
+    def _is_tracker_locked(self) -> bool:
+        """Vérifier si le tracker est actuellement verrouillé.
+
+        Utilise le binary_sensor via le registry, ou fallback sur le coordinator.
+        binary_sensor lock : off = verrouillé, on = déverrouillé.
+        """
+        from .helpers import resolve_entity_id
+        lock_entity = resolve_entity_id(
+            self._hass, "binary_sensor", self.tracker_id, "verrouille"
+        )
+        if lock_entity:
+            state = self._hass.states.get(lock_entity)
+            if state and state.state not in ("unknown", "unavailable"):
+                return state.state == "off"  # off = locked
+
+        # Fallback : coordinator status data
+        if (
+            self._coordinator._status_coordinator
+            and self._coordinator._status_coordinator.data
+        ):
+            return bool(self._coordinator._status_coordinator.data.get("isLocked", False))
+
+        return False
 
     # ── Étape 1 : press immédiat ──────────────────────────────────────────────
 
     async def async_press(self) -> None:
-        """Étape 1 — Horodatage du plein + attendre le prochain verrouillage."""
+        """Étape 1 — Horodatage du plein + attendre le prochain verrouillage.
+
+        Si le tracker est déjà verrouillé (plein confirmé à l'arrêt), le calcul
+        est exécuté immédiatement sans attendre un verrouillage futur.
+        """
         # Si un plein est déjà en attente, l'annuler proprement
         if self._unregister_stop_cb:
             _LOGGER.warning(
@@ -427,6 +470,15 @@ class GeoRideConfirmerPleinButton(ButtonEntity):
         now = datetime.now(timezone.utc)
 
         await self._set_datetime("plein_pending_at", now)
+
+        # Si le tracker est déjà verrouillé → calcul immédiat
+        if self._is_tracker_locked():
+            _LOGGER.info(
+                "%s: plein enregistré à %s — tracker déjà verrouillé, calcul immédiat",
+                self.tracker_name, now.strftime("%H:%M:%S"),
+            )
+            await self._compute_and_record_plein()
+            return
 
         _LOGGER.info(
             "%s: plein enregistré à %s — attente verrouillage pour calcul précis",

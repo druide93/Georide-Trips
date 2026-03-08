@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfLength, UnitOfElectricPotential, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -607,6 +608,22 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
 
     @callback
     def _handle_state_change(self, event) -> None:
+        # Ignorer les transitions de démarrage de l'odometer (unknown/unavailable → valeur).
+        # Ces transitions se produisent à chaque rechargement de l'intégration et peuvent
+        # déclencher un recalcul prématuré avec un snapshot pas encore stabilisé.
+        old_state = event.data.get("old_state")
+        entity_changed = event.data.get("entity_id", "")
+        if (
+            entity_changed == self._odometer_sensor.entity_id
+            and old_state is not None
+            and old_state.state in (None, "unknown", "unavailable")
+        ):
+            _LOGGER.debug(
+                "%s: transition démarrage odometer ignorée (old=%s)",
+                self._attr_name, old_state.state if old_state else "None",
+            )
+            return
+
         self._recalculate()
         self.async_write_ha_state()
 
@@ -621,8 +638,29 @@ class _GeoRideKmPeriodBase(SensorEntity, RestoreEntity):
                 pass
         return default
 
+    def _is_snapshot_ready(self) -> bool:
+        """Retourne True si le snapshot entity est disponible et non nul."""
+        state = self._hass.states.get(self._snapshot_entity)
+        if state is None or state.state in (None, "unknown", "unavailable"):
+            return False
+        try:
+            val = float(state.state)
+            return val > 0.0
+        except (ValueError, TypeError):
+            return False
+
     def _recalculate(self) -> None:
         odometer_km = self._odometer_sensor.native_value or 0.0
+
+        # Si le snapshot est 0.0 (valeur transitoire au démarrage avant restauration complète)
+        # et que l'odometer est significatif, on conserve la valeur restaurée sans écraser.
+        if not self._is_snapshot_ready():
+            _LOGGER.debug(
+                "%s: snapshot non prêt (unavailable ou 0), recalcul ignoré",
+                self._attr_name,
+            )
+            return
+
         snapshot_km = self._get_float(self._snapshot_entity, 0.0)
         km = max(odometer_km - snapshot_km, 0.0)
         self._attr_native_value = round(km, 1)
@@ -779,7 +817,7 @@ class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
         end_time = trip.get("endTime", "")
 
         try:
-            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            start_dt = dt_util.as_local(datetime.fromisoformat(start_time.replace('Z', '+00:00')))
             date_formatted = start_dt.strftime("%d/%m/%Y")
             start_hour = start_dt.strftime("%H:%M")
         except Exception:
@@ -787,7 +825,7 @@ class GeoRideLastTripDetailsSensor(CoordinatorEntity, SensorEntity):
             start_hour = ""
 
         try:
-            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            end_dt = dt_util.as_local(datetime.fromisoformat(end_time.replace('Z', '+00:00')))
             end_hour = end_dt.strftime("%H:%M")
         except Exception:
             end_hour = ""

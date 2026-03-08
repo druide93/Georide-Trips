@@ -2,14 +2,22 @@
 
 Entités créées par tracker :
 
-── Alimentées par Socket.IO (temps réel) ─────────────────────────
+── Alimentées par Socket.IO (temps réel) + StatusCoordinator fallback ──
   - moving   : True si la moto est en mouvement
   - stolen   : True si l'alarme vol est active
   - crashed  : True si une chute est détectée
+  - locked   : True si le tracker est DÉVERROUILLÉ (convention HA LOCK)
+               Socket.IO event "lock" + fallback polling 5 min
+               ⚠ Inversion : GeoRide locked=True → is_on=False (verrouillé)
 
 ── Alimentées par GeoRideTrackerStatusCoordinator (polling 5 min) ──
   - online   : True si le tracker est en ligne (status == "online")
-  - locked   : True si le tracker est verrouillé (isLocked)
+
+── Alimentées par calcul temps réel (state listeners) ──
+  - plein_requis     : autonomie ≤ seuil
+  - chaine_requise   : km restants chaîne ≤ seuil
+  - vidange_requise  : km restants vidange ≤ seuil
+  - revision_requise : km restants revision ≤ seuil OU jours ≤ 30
 """
 
 import logging
@@ -41,6 +49,10 @@ SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
         "icon_off": "mdi:motorbike-off",
         "socket_events": ["position", "device"],
         "payload_key": "moving",
+        # Clé dans le StatusCoordinator pour le fallback polling
+        "coordinator_fallback_key": "moving",
+        # Pas d'inversion : moving=True → is_on=True
+        "invert": False,
     },
     {
         "key": "stolen",
@@ -50,6 +62,8 @@ SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
         "icon_off": "mdi:shield-check",
         "socket_events": ["device"],
         "payload_key": "stolen",
+        "coordinator_fallback_key": None,
+        "invert": False,
     },
     {
         "key": "crashed",
@@ -59,6 +73,22 @@ SOCKET_BINARY_SENSOR_DESCRIPTIONS = [
         "icon_off": "mdi:check-circle",
         "socket_events": ["device"],
         "payload_key": "crashed",
+        "coordinator_fallback_key": None,
+        "invert": False,
+    },
+    {
+        "key": "locked",
+        "name": "Verrouillé",
+        "device_class": BinarySensorDeviceClass.LOCK,
+        "icon_on": "mdi:lock-open",
+        "icon_off": "mdi:lock",
+        "socket_events": ["lock", "device"],
+        "payload_key": "locked",
+        # Le StatusCoordinator expose "isLocked" (pas "locked")
+        "coordinator_fallback_key": "isLocked",
+        # Inversion : BinarySensorDeviceClass.LOCK → is_on=True = déverrouillé
+        # GeoRide envoie locked=True quand verrouillé → is_on doit être False
+        "invert": True,
     },
 ]
 
@@ -78,19 +108,19 @@ async def async_setup_entry(
         tracker_id = str(tracker.get("trackerId"))
         status_coordinator = tracker_status_coordinators[tracker_id]
 
-        # Sensors Socket.IO
+        # Sensors Socket.IO (avec coordinator fallback optionnel)
         for desc in SOCKET_BINARY_SENSOR_DESCRIPTIONS:
-            # Le sensor "moving" reçoit en plus le status_coordinator comme filet de sécurité :
-            # si Socket.IO s'arrête sans envoyer de moving=False final, le polling 5 min
-            # remet le capteur à OFF dès que le coordinator confirme l'arrêt.
-            coordinator_fallback = status_coordinator if desc["key"] == "moving" else None
+            coordinator_fallback = (
+                status_coordinator
+                if desc.get("coordinator_fallback_key")
+                else None
+            )
             entities.append(
                 GeoRideBinarySensor(entry, tracker, desc, coordinator_fallback)
             )
 
-        # Sensors polling (status coordinator)
+        # Sensor polling pur : online (pas d'event Socket.IO dédié)
         entities.append(GeoRideOnlineBinarySensor(status_coordinator, entry, tracker))
-        entities.append(GeoRideLockedBinarySensor(status_coordinator, entry, tracker))
 
         # Binary sensors calculés : indicateurs d'alerte entretien/carburant
         entities.extend([
@@ -109,17 +139,18 @@ async def async_setup_entry(
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# BINARY SENSORS SOCKET.IO
+# BINARY SENSORS SOCKET.IO (+ coordinator fallback)
 # ════════════════════════════════════════════════════════════════════════════
 
 class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
     """Binary sensor GeoRide alimenté par Socket.IO.
 
     Accepte un coordinator_fallback optionnel (GeoRideTrackerStatusCoordinator) :
-    à chaque polling du coordinator, si le champ correspondant (ex: moving) vaut False
-    alors que le sensor est ON, le sensor est forcé à OFF.
-    Cela couvre le cas où Socket.IO ne livre pas le dernier événement moving=False
-    (micro-coupure réseau, reconnexion tardive, événements hors-ordre).
+    à chaque polling du coordinator, l'état est synchronisé pour corriger un
+    état bloqué (ex: dernier événement Socket.IO perdu par micro-coupure réseau).
+
+    Supporte l'inversion de valeur via desc["invert"] pour les cas comme LOCK
+    où la convention HA est inversée par rapport au payload GeoRide.
     """
 
     def __init__(
@@ -142,6 +173,11 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
         self._attr_name = f"{self._tracker_name} {desc['name']}"
         self._attr_device_class = desc["device_class"]
         self._attr_is_on = False
+
+        # Inversion pour LOCK : locked=True → is_on=False
+        self._invert = desc.get("invert", False)
+        # Clé dans le coordinator data (peut différer du payload Socket.IO)
+        self._coordinator_fallback_key = desc.get("coordinator_fallback_key")
 
         self._unregister_callbacks: list = []
         self._unregister_coordinator: callable | None = None
@@ -201,30 +237,52 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
         """Filet de sécurité : synchroniser l'état depuis le StatusCoordinator.
 
         Appelé à chaque polling du coordinator (toutes les 5 min).
-        Si le coordinator confirme moving=False et que le sensor est encore ON,
-        on le remet à OFF pour corriger un état bloqué (ex: dernier événement
-        Socket.IO était moving=True avant déconnexion réseau).
+        Synchronise l'état du binary sensor avec la valeur du coordinator
+        pour corriger un état bloqué (ex: événement Socket.IO perdu).
+
+        Pour "moving" : n'agit que si coordinator dit False et sensor est ON
+        (évite d'écraser un vrai mouvement confirmé par Socket.IO).
+
+        Pour "locked" : synchronise dans les deux sens car l'événement lock
+        peut être perdu aussi bien dans un sens que dans l'autre (verrouillage
+        depuis l'app GeoRide, béquille latérale, etc.).
         """
-        payload_key = self._desc["payload_key"]
+        if not self._coordinator_fallback_key:
+            return
+
         data = self._coordinator_fallback.data
         if not data:
             return
 
-        coordinator_state = data.get(payload_key)
-        if coordinator_state is None:
+        coordinator_value = data.get(self._coordinator_fallback_key)
+        if coordinator_value is None:
             return
 
-        new_state = bool(coordinator_state)
+        raw_state = bool(coordinator_value)
+        # Appliquer l'inversion si nécessaire (LOCK : isLocked=True → is_on=False)
+        new_state = (not raw_state) if self._invert else raw_state
 
-        # N'agir que si le coordinator dit OFF et que le sensor est bloqué ON
-        # (évite d'écraser un vrai mouvement en cours confirmé par Socket.IO)
-        if not new_state and self._attr_is_on:
-            self._attr_is_on = False
-            self.async_write_ha_state()
-            _LOGGER.debug(
-                "%s → OFF (fallback coordinator, Socket.IO n'avait pas livré l'état final)",
-                self._attr_name,
-            )
+        if self._desc["key"] == "moving":
+            # Moving : n'agir que pour corriger un état bloqué ON
+            # (le coordinator dit arrêté mais Socket.IO n'a pas livré moving=False)
+            if not new_state and self._attr_is_on:
+                self._attr_is_on = False
+                self.async_write_ha_state()
+                _LOGGER.debug(
+                    "%s → OFF (fallback coordinator, Socket.IO n'avait pas livré l'état final)",
+                    self._attr_name,
+                )
+        else:
+            # Pour les autres (locked, etc.) : synchroniser dans les deux sens
+            if new_state != self._attr_is_on:
+                self._attr_is_on = new_state
+                self.async_write_ha_state()
+                _LOGGER.debug(
+                    "%s → %s (synced from coordinator fallback, key=%s)",
+                    self._attr_name,
+                    "ON" if new_state else "OFF",
+                    self._coordinator_fallback_key,
+                )
 
     async def _handle_socket_event(self, data: dict) -> None:
         """Traiter un événement Socket.IO et mettre à jour l'état."""
@@ -235,13 +293,20 @@ class GeoRideBinarySensor(BinarySensorEntity, RestoreEntity):
                 self._attr_name, payload_key, data,
             )
             return
-        new_state = bool(data[payload_key])
+
+        raw_state = bool(data[payload_key])
+        # Appliquer l'inversion si nécessaire (LOCK : locked=True → is_on=False)
+        new_state = (not raw_state) if self._invert else raw_state
+
         self._attr_is_on = new_state
         self.async_write_ha_state()
         _LOGGER.debug(
-            "%s → %s (from Socket.IO event)",
+            "%s → %s (from Socket.IO event, raw %s=%s%s)",
             self._attr_name,
             "ON" if new_state else "OFF",
+            payload_key,
+            raw_state,
+            " [inverted]" if self._invert else "",
         )
 
 
@@ -284,44 +349,6 @@ class GeoRideOnlineBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def icon(self) -> str:
         return "mdi:signal" if self.is_on else "mdi:signal-off"
-
-
-class GeoRideLockedBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor : tracker verrouillé (isLocked), mis à jour toutes les 5 min."""
-
-    def __init__(self, coordinator, entry: ConfigEntry, tracker: dict) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._tracker = tracker
-        self._tracker_id = str(tracker.get("trackerId"))
-        self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
-
-        self._attr_unique_id = f"{self._tracker_id}_locked"
-        self._attr_name = f"{self._tracker_name} Verrouillé"
-        self._attr_device_class = BinarySensorDeviceClass.LOCK
-        self._attr_entity_category = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._tracker_id)},
-            name=f"{self._tracker_name} Trips",
-            manufacturer="GeoRide",
-            model=self._tracker.get("model", "GeoRide Tracker"),
-            sw_version=str(self._tracker.get("softwareVersion", "")),
-        )
-
-    @property
-    def is_on(self) -> bool:
-        # BinarySensorDeviceClass.LOCK : is_on=True = déverrouillé, is_on=False = verrouillé
-        data = self.coordinator.data
-        if not data:
-            return False
-        return not bool(data.get("isLocked", False))
-
-    @property
-    def icon(self) -> str:
-        return "mdi:lock-open" if self.is_on else "mdi:lock"
 
 
 # ════════════════════════════════════════════════════════════════════════════

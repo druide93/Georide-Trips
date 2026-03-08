@@ -51,11 +51,14 @@ from homeassistant.const import EntityCategory, UnitOfLength
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+STORAGE_VERSION = 1
+STORAGE_KEY = "georide_trips_numbers"
 
 NUMBER_DESCRIPTIONS = [
 
@@ -289,10 +292,15 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     trackers = data["trackers"]
 
+    # Store partagé pour toutes les entités number de cette config entry.
+    # Écrit sur disque immédiatement à chaque set_value → survit aux redémarrages.
+    store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
+    stored_data: dict = await store.async_load() or {}
+
     entities = []
     for tracker in trackers:
         for desc in NUMBER_DESCRIPTIONS:
-            entities.append(GeoRideNumberEntity(entry, tracker, desc))
+            entities.append(GeoRideNumberEntity(entry, tracker, desc, store, stored_data))
 
     async_add_entities(entities)
     _LOGGER.info(
@@ -302,13 +310,26 @@ async def async_setup_entry(
     )
 
 
-class GeoRideNumberEntity(NumberEntity, RestoreEntity):
-    """Entité number persistante rattachée au device GeoRide."""
+class GeoRideNumberEntity(NumberEntity):
+    """Entité number persistante rattachée au device GeoRide.
 
-    def __init__(self, entry: ConfigEntry, tracker: dict, desc: dict) -> None:
+    Utilise homeassistant.helpers.storage.Store au lieu de RestoreEntity :
+    chaque modification est écrite sur disque immédiatement (async_delay=0),
+    ce qui garantit la survie des valeurs même en cas de redémarrage brutal.
+    """
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        tracker: dict,
+        desc: dict,
+        store: Store,
+        stored_data: dict,
+    ) -> None:
         self._entry = entry
         self._tracker = tracker
         self._desc = desc
+        self._store = store
 
         self._tracker_id = str(tracker.get("trackerId"))
         self._tracker_name = tracker.get("trackerName", f"Tracker {self._tracker_id}")
@@ -321,8 +342,18 @@ class GeoRideNumberEntity(NumberEntity, RestoreEntity):
         self._attr_native_min_value = float(desc["min"])
         self._attr_native_max_value = float(desc["max"])
         self._attr_native_step = float(desc["step"])
-        self._attr_native_value = float(desc["default"])
         self._attr_entity_category = desc.get("entity_category")
+
+        # Clé de stockage unique par entité
+        self._storage_key = f"{self._tracker_id}_{desc['key']}"
+
+        # Restaurer depuis le Store (chargé avant la création des entités)
+        default = float(desc["default"])
+        raw = stored_data.get(self._storage_key)
+        try:
+            self._attr_native_value = float(raw) if raw is not None else default
+        except (ValueError, TypeError):
+            self._attr_native_value = default
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -334,16 +365,21 @@ class GeoRideNumberEntity(NumberEntity, RestoreEntity):
             sw_version=str(self._tracker.get("softwareVersion", "")),
         )
 
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        if (last_state := await self.async_get_last_state()) is not None:
-            if last_state.state not in (None, "unknown", "unavailable"):
-                try:
-                    self._attr_native_value = float(last_state.state)
-                except (ValueError, TypeError):
-                    self._attr_native_value = float(self._desc["default"])
-
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
         self.async_write_ha_state()
+        # Persister immédiatement sur disque
+        await self._persist(value)
         _LOGGER.debug("Set %s for %s: %s", self._desc["key"], self._tracker_name, value)
+
+    async def _persist(self, value: float) -> None:
+        """Écrire la valeur dans le Store (disque) immédiatement."""
+        try:
+            current: dict = await self._store.async_load() or {}
+            current[self._storage_key] = value
+            await self._store.async_save(current)
+        except Exception as err:
+            _LOGGER.error(
+                "Impossible de persister %s pour %s : %s",
+                self._desc["key"], self._tracker_name, err,
+            )
