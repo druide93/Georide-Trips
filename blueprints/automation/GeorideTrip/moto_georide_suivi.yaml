@@ -1,12 +1,12 @@
 blueprint:
-  name: "Moto GeoRide - Suivi complet (v29)"
+  name: "Moto GeoRide - Suivi complet (v30)"
   description: |
     # 🏍️ Moto GeoRide - Suivi complet
 
     Blueprint de gestion complète d'une moto équipée d'un tracker GeoRide.
     Créer **une instance par moto**. Utilise exclusivement les entités de l'intégration **georide_trips** — aucun helper externe nécessaire.
 
-    *Version : 2026.03.02*
+    *Version : 2026.03.14*
 
     ---
 
@@ -1120,6 +1120,33 @@ actions:
         # Lire l'odometer (à jour via Socket.IO)
         - variables:
             odometer_km_frais: "{{ states(odometer_sensor) | float(0) }}"
+
+        # Si un plein est en cours d'enregistrement, attendre que km_au_dernier_plein
+        # soit mis à jour par Python avant de lire l'autonomie restante.
+        # plein_pending_at = epoch 1970 → pas de plein en attente.
+        - variables:
+            dt_plein_pending: >
+              {{ odometer_sensor | replace('sensor.', 'datetime.') | replace('_odometer', '_plein_pending_at') }}
+            plein_en_cours: >
+              {% set v = states(dt_plein_pending) %}
+              {% if v in ['unavailable', 'unknown', 'none'] %}
+                false
+              {% else %}
+                {{ (v | as_datetime).year > 1970 }}
+              {% endif %}
+        - if:
+            - condition: template
+              value_template: "{{ plein_en_cours }}"
+          then:
+            - wait_for_trigger:
+                - trigger: state
+                  entity_id: !input n_km_dernier_plein
+              timeout:
+                minutes: 8
+              continue_on_timeout: true
+
+        # Lire l'autonomie restante (après mise à jour plein si applicable)
+        - variables:
             km_restants_trajet: "{{ states(sensor_autonomie_restante) | float(0) | round(1) }}"
 
         # Notification
