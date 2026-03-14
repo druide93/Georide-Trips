@@ -1,6 +1,6 @@
 # 🏍️ GeoRide Trips — Intégration Home Assistant
 
-[![Version](https://img.shields.io/badge/version-2.4.1-blue.svg)](https://github.com/druide93/Georide-Trips)
+[![Version](https://img.shields.io/badge/version-2.5-blue.svg)](https://github.com/druide93/Georide-Trips)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1+-green.svg)](https://www.home-assistant.io/)
 
